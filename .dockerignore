@@ -1,0 +1,63 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# .dockerignore — Manga VLM Translator
+#
+# Tương tự .gitignore nhưng cho Docker build context.
+# Những gì ở đây sẽ KHÔNG được copy vào image khi "docker build".
+#
+# Lý do quan trọng:
+#   1. Bảo mật : .env chứa API keys → không bao giờ bake vào image
+#   2. Tốc độ  : models/ (~217MB), .venv/ (~2GB+) → build nhanh hơn nhiều
+#   3. Đúng đắn: library/ là runtime data → mount volume, không bake vào image
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Secrets — KHÔNG BAO GIỜ vào image ──────────────────────────────────────
+.env
+keys_state.json
+
+# ── Python virtual environment ───────────────────────────────────────────────
+# .venv/ rất nặng (2GB+) và không dùng được trong container Linux
+.venv/
+venv/
+env/
+
+# ── Python bytecode cache ────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Git / IDE ────────────────────────────────────────────────────────────────
+.git/
+.github/
+.gitignore
+.vscode/
+.codegraph/
+
+# ── Volume data — mount từ host, KHÔNG bake vào image ───────────────────────
+library/
+BE/models/
+BE/fonts/
+
+# ── Logs (runtime data) ──────────────────────────────────────────────────────
+logs/
+BE/logs/
+*.log
+
+# ── Celery state files ───────────────────────────────────────────────────────
+celerybeat-schedule.*
+
+# ── Dev/test artifacts ───────────────────────────────────────────────────────
+scratch/
+result/
+pip-modules/
+test_*.py
+*.ipynb
+
+# ── Windows-specific scripts (không dùng trong Linux container) ──────────────
+*.bat
+*.ps1
+
+# ── Build artifacts ──────────────────────────────────────────────────────────
+*.egg-info/
+dist/
+build/

@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manga Reader — Đang dịch...</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:        #0d0d14;
+      --surface:   #13131f;
+      --surface2:  #1a1a2e;
+      --border:    rgba(255,255,255,0.07);
+      --accent:    #6c63ff;
+      --accent2:   #3ecfcf;
+      --success:   #22c55e;
+      --warning:   #f59e0b;
+      --danger:    #ef4444;
+      --text:      #e2e2f0;
+      --muted:     #6b7280;
+      --radius:    12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,13,20,0.92);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .header-logo {
+      font-size: 20px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      white-space: nowrap;
+    }
+
+    .header-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .header-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* ── Progress bar ── */
+    .progress-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 200px;
+    }
+
+    .progress-bar-bg {
+      flex: 1;
+      height: 6px;
+      background: var(--surface2);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 99px;
+      transition: width 0.6s ease;
+      width: 0%;
+    }
+
+    .progress-text {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent2);
+      white-space: nowrap;
+    }
+
+    /* ── Status badge ── */
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .status-badge.scraping    { background: rgba(62,207,207,0.12);  color: var(--accent2); }
+    .status-badge.queued      { background: rgba(107,114,128,0.15); color: var(--muted); }
+    .status-badge.downloading { background: rgba(245,158,11,0.15);  color: var(--warning); }
+    .status-badge.translating { background: rgba(108,99,255,0.15);  color: var(--accent); }
+    .status-badge.done        { background: rgba(34,197,94,0.15);   color: var(--success); }
+    .status-badge.error       { background: rgba(239,68,68,0.15);   color: var(--danger); }
+
+    .pulse {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 1.5s ease infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    /* ── Main layout ── */
+    .main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 32px 16px;
+    }
+
+    /* ── Pages grid ── */
+    .pages-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ── Page card ── */
+    .page-card {
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      position: relative;
+    }
+
+    .page-card .page-num {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      backdrop-filter: blur(4px);
+      z-index: 5;
+    }
+
+    .page-card img {
+      width: 100%;
+      display: block;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+
+    .page-card img.loaded { opacity: 1; }
+
+    /* ── Skeleton (loading placeholder) ── */
+    .skeleton {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      background: linear-gradient(
+        90deg,
+        var(--surface2) 25%,
+        rgba(255,255,255,0.04) 50%,
+        var(--surface2) 75%
+      );
+      background-size: 200% 100%;
+      animation: shimmer 1.8s ease infinite;
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position:  200% 0; }
+    }
+
+    .skeleton-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .skeleton-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Done banner ── */
+    .done-banner {
+      display: none;
+      margin-bottom: 24px;
+      padding: 16px 20px;
+      background: rgba(34,197,94,0.1);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: var(--radius);
+      color: var(--success);
+      font-weight: 600;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .done-banner.show { display: block; }
+
+    /* ── Error banner ── */
+    .error-banner {
+      display: none;
+      margin-bottom: 24px;
+      padding: 16px 20px;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: var(--radius);
+      color: var(--danger);
+      font-size: 13px;
+    }
+
+    .error-banner.show { display: block; }
+
+    /* ── Zoom overlay ── */
+    .zoom-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      cursor: zoom-out;
+    }
+
+    .zoom-overlay.show { display: flex; }
+
+    .zoom-overlay img {
+      max-width: 95vw;
+      max-height: 95vh;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+
+    /* ── Novel text view ── */
+    .novel-view {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    .novel-view .novel-waiting {
+      text-align: center;
+      padding: 80px 24px;
+      color: var(--muted);
+    }
+
+    .novel-spinner {
+      width: 48px; height: 48px;
+      border: 4px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin: 0 auto 20px;
+    }
+
+    .novel-content {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 40px 48px;
+      font-size: 17px;
+      line-height: 1.9;
+      color: #dce0f0;
+      font-family: 'Georgia', 'Times New Roman', serif;
+      white-space: pre-wrap;       /* giữ xuống dòng */
+      word-break: break-word;
+    }
+
+    .novel-content p {
+      margin-bottom: 1.25em;
+    }
+
+    /* Badge loại nội dung */
+    .type-badge {
+      padding: 3px 10px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .type-badge.manga  { background: rgba(108,99,255,0.15); color: var(--accent); }
+    .type-badge.novel  { background: rgba(62,207,207,0.15); color: var(--accent2); }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-logo">📖 MangaAI</div>
+
+  <div class="header-info">
+    <div class="header-title" id="hdr-title">Đang tải thông tin...</div>
+    <div class="header-sub"  id="hdr-sub">—</div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="prog-fill"></div>
+    </div>
+    <span class="progress-text" id="prog-text">0/0</span>
+  </div>
+
+  <div class="status-badge queued" id="status-badge">
+    <div class="pulse"></div>
+    <span id="status-text">Đang chờ</span>
+  </div>
+</header>
+
+<!-- Main -->
+<main class="main">
+  <div class="done-banner"  id="done-banner">&#x2705; Dịch xong toàn bộ chapter!</div>
+  <div class="error-banner" id="error-banner"></div>
+
+  <!-- Manga view: dảnh ảnh -->
+  <div class="pages-list" id="pages-list"></div>
+
+  <!-- Novel view: text -->
+  <div class="novel-view" id="novel-view" style="display:none;">
+    <div class="novel-waiting" id="novel-waiting">
+      <div class="novel-spinner"></div>
+      <div>&#x23F3; Đang dịch nội dung novel...</div>
+    </div>
+    <div class="novel-content" id="novel-content" style="display:none;"></div>
+  </div>
+</main>
+
+<!-- Zoom overlay -->
+<div class="zoom-overlay" id="zoom-overlay">
+  <img id="zoom-img" src="" alt="zoom" />
+</div>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // Parse query params
+  // ---------------------------------------------------------------------------
+  const params       = new URLSearchParams(location.search);
+  const JOB_ID       = params.get("job_id")    || "";
+  const MANGA_ID     = params.get("manga_id")  || "";
+  const CHAPTER      = params.get("chapter")   || "?";
+  const TITLE        = params.get("title")     || "Unknown";
+  const CONTENT_TYPE = params.get("type")      || "manga";  // "manga" | "novel"
+  const API_BASE     = window.location.origin;  // tự động đúng dù localhost hay Cloudflare
+
+  const IS_NOVEL = CONTENT_TYPE === "novel";
+
+  // Show/hide appropriate view on init
+  if (IS_NOVEL) {
+    document.getElementById("novel-view").style.display = "";
+    document.getElementById("pages-list").style.display = "none";
+  }
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+  let totalPages      = 0;
+  let renderedIndices = new Set();  // page_index đã render vào DOM
+  let pollTimer       = null;
+
+  // ---------------------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------------------
+  document.getElementById("hdr-title").textContent = decodeURIComponent(TITLE.replace(/\+/g, " "));
+  document.getElementById("hdr-sub").textContent   = `Chapter ${CHAPTER}`;
+  document.title = `${decodeURIComponent(TITLE.replace(/\+/g, " "))} — Ch.${CHAPTER}`;
+
+  if (!JOB_ID) {
+    showError("Thiếu job_id trong URL. Hãy dịch lại từ extension.");
+  } else {
+    poll();
+    pollTimer = setInterval(poll, 2000);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Polling
+  // ---------------------------------------------------------------------------
+  async function poll() {
+    try {
+      const res = await fetch(`${API_BASE}/scrape/job/${JOB_ID}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          clearInterval(pollTimer);
+          showError("Job không tồn tại hoặc server đã restart.");
+          return;
+        }
+        return; // tạm thời ignore lỗi mạng
+      }
+
+      const data = await res.json();
+      updateUI(data);
+
+      if (data.status === "done" || data.status === "error") {
+        clearInterval(pollTimer);
+      }
+
+    } catch (e) {
+      console.warn("[Reader] Poll error:", e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Update UI
+  // ---------------------------------------------------------------------------
+  function updateUI(data) {
+    const { status, total_pages, translated_pages, pages, error, manga_name, chapter_number,
+            content_type, novel_text } = data;
+
+    // Header info
+    if (manga_name) {
+      // Strip " [Novel]" suffix from display title if present
+      const displayName = manga_name.replace(/ \[Novel\]$/, "");
+      document.getElementById("hdr-title").textContent = displayName;
+      document.title = `${displayName} — Ch.${chapter_number}`;
+      document.getElementById("hdr-sub").textContent   = `Chapter ${chapter_number}`;
+    }
+
+    // Novel rendering
+    if (IS_NOVEL || content_type === "novel") {
+      if (novel_text) {
+        document.getElementById("novel-waiting").style.display = "none";
+        const contentEl = document.getElementById("novel-content");
+        contentEl.style.display = "";
+        // Render paragraphs: split on double newlines
+        const paragraphs = novel_text.split(/\n\n+/);
+        contentEl.innerHTML = paragraphs
+          .map(p => p.trim())
+          .filter(p => p.length > 0)
+          .map(p => `<p>${p.replace(/\n/g, "<br>")}</p>`)
+          .join("");
+      }
+      // Progress for novel = simple done/not done
+      const pct = status === "done" ? 100 : 0;
+      document.getElementById("prog-fill").style.width = pct + "%";
+      document.getElementById("prog-text").textContent = status === "done" ? "Xong" : "⏳";
+      updateBadge(status);
+      if (status === "done") document.getElementById("done-banner").classList.add("show");
+      if (status === "error" && error) showError(error);
+      return;  // skip manga-specific rendering below
+    }
+
+    // ── Manga rendering (unchanged) ──
+
+    // Total pages — init skeletons once we know
+    // status="scraping": chưa biết số trang, hiện spinner chờ
+    if (status === "scraping") {
+      document.getElementById("prog-text").textContent = "⏳ Scrape...";
+      document.getElementById("prog-fill").style.width = "5%";
+      updateBadge(status);
+      return;
+    }
+
+    if (total_pages > 0 && totalPages === 0) {
+      totalPages = total_pages;
+      initSkeletons(total_pages);
+    }
+
+    // Progress
+    const pct = totalPages > 0 ? Math.round((translated_pages / totalPages) * 100) : 0;
+    document.getElementById("prog-fill").style.width = pct + "%";
+    document.getElementById("prog-text").textContent = `${translated_pages}/${totalPages || "?"}`;
+
+    // Status badge
+    updateBadge(status);
+
+    // Render new pages
+    for (const page of pages) {
+      if (!renderedIndices.has(page.page_index)) {
+        renderedIndices.add(page.page_index);
+        renderPage(page.page_index, page.preview_url);
+      }
+    }
+
+    // Final states
+    if (status === "done") {
+      document.getElementById("done-banner").classList.add("show");
+    }
+    if (status === "error" && error) {
+      showError(error);
+    }
+  }
+
+  function updateBadge(status) {
+    const badge = document.getElementById("status-badge");
+    const text  = document.getElementById("status-text");
+    const labels = {
+      scraping:    "Scraping...",
+      queued:      "Đang chờ",
+      downloading: "Đang tải ảnh",
+      translating: "Đang dịch...",
+      done:        "Hoàn thành",
+      error:       "Lỗi",
+    };
+    badge.className = `status-badge ${status}`;
+    text.textContent = labels[status] || status;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Skeleton init
+  // ---------------------------------------------------------------------------
+  function initSkeletons(n) {
+    const list = document.getElementById("pages-list");
+    list.innerHTML = "";
+    for (let i = 0; i < n; i++) {
+      const card = document.createElement("div");
+      card.className = "page-card";
+      card.id = `card-${i}`;
+      card.innerHTML = `
+        <span class="page-num">Trang ${i + 1}</span>
+        <div class="skeleton" id="skel-${i}">
+          <div class="skeleton-label">
+            <div class="skeleton-spinner"></div>
+            <span>Đang dịch trang ${i + 1}...</span>
+          </div>
+        </div>
+      `;
+      list.appendChild(card);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render a completed page
+  // ---------------------------------------------------------------------------
+  function renderPage(pageIndex, previewUrl) {
+    const card = document.getElementById(`card-${pageIndex}`);
+    if (!card) return;
+
+    const skel = document.getElementById(`skel-${pageIndex}`);
+
+    const img = document.createElement("img");
+    img.alt = `Trang ${pageIndex + 1}`;
+    img.src = `${API_BASE}${previewUrl}`;
+
+    img.onload = () => {
+      img.classList.add("loaded");
+      if (skel) skel.remove();
+    };
+
+    img.onerror = () => {
+      // Retry once after 1s
+      setTimeout(() => { img.src = img.src + "?r=" + Date.now(); }, 1000);
+    };
+
+    // Click to zoom
+    img.style.cursor = "zoom-in";
+    img.addEventListener("click", () => {
+      const overlay = document.getElementById("zoom-overlay");
+      document.getElementById("zoom-img").src = img.src;
+      overlay.classList.add("show");
+    });
+
+    card.appendChild(img);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Error display
+  // ---------------------------------------------------------------------------
+  function showError(msg) {
+    const el = document.getElementById("error-banner");
+    el.textContent = "❌ Lỗi: " + msg;
+    el.classList.add("show");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Zoom overlay
+  // ---------------------------------------------------------------------------
+  document.getElementById("zoom-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget || e.target.tagName === "IMG") {
+      e.currentTarget.classList.remove("show");
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      document.getElementById("zoom-overlay").classList.remove("show");
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,130 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — Manga VLM Translator
+#
+# Services:
+#   db      — PostgreSQL 16 (database)
+#   redis   — Redis (Celery broker + backend)
+#   api     — FastAPI server (port 8000)
+#   worker  — Celery worker (xử lý job dịch)
+#   beat    — Celery beat (periodic tasks: cleanup, reset key stats...)
+#
+# Cách dùng:
+#   Lần đầu:  docker-compose up --build
+#   Lần sau:  docker-compose up
+#   Tắt:      docker-compose down        (giữ data)
+#   Xóa data: docker-compose down -v     (xóa pgdata volume)
+# ──────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────────────────────────────
+  # Dữ liệu được lưu trong named volume "pgdata" → persist khi container restart.
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: manga
+      POSTGRES_PASSWORD: manga_secret
+      POSTGRES_DB: manga_translator
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Kiểm tra DB sẵn sàng nhận kết nối trước khi api/worker/beat start
+      test: ["CMD-SHELL", "pg_isready -U manga -d manga_translator"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  # ── Redis Broker ─────────────────────────────────────────────────────────────
+  # Celery dùng Redis làm message broker (nhận task) và result backend (lưu kết quả).
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── FastAPI Server ───────────────────────────────────────────────────────────
+  # Serve web UI (playground, reader) và REST API cho Chrome extension.
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"        # Máy host:container — truy cập http://localhost:8000
+    env_file: .env         # Đọc GEMINI_API_KEYS và các user secrets
+    environment:
+      # Override các giá trị cần đổi khi chạy trong Docker
+      # (env vars ở đây có priority cao hơn giá trị trong .env)
+      HOST: "0.0.0.0"                    # Lắng nghe mọi network interface (cần trong container)
+      RELOAD: "false"                    # Tắt hot-reload (production mode)
+      PLAYWRIGHT_HEADLESS: "true"        # Chạy Chromium ẩn (server không có màn hình)
+      REDIS_URL: "redis://redis:6379/0"  # "redis" = tên service, Docker tự resolve thành IP
+      DATABASE_URL: "postgresql+asyncpg://manga:manga_secret@db:5432/manga_translator"
+    volumes:
+      - ./library:/app/library        # Ảnh manga đã dịch — persist trên máy host
+      - ./BE/models:/app/BE/models    # LaMa model weights (~217MB) — không bake vào image
+      - ./BE/fonts:/app/BE/fonts      # Font chữ CJK — không bake vào image
+    depends_on:
+      db:
+        condition: service_healthy    # Chờ postgres sẵn sàng trước khi start
+      redis:
+        condition: service_healthy    # Chờ redis sẵn sàng trước khi start
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s              # Cho phép 30s để uvicorn khởi động
+
+  # ── Celery Worker ────────────────────────────────────────────────────────────
+  # Nhận task từ Redis queue và thực hiện xử lý nền (dịch chapter, render ảnh...).
+  # -P threads -c 1 : dùng thread pool, 1 worker (phù hợp với async code)
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql+asyncpg://manga:manga_secret@db:5432/manga_translator"
+    volumes:
+      - ./library:/app/library
+      - ./BE/models:/app/BE/models
+      - ./BE/fonts:/app/BE/fonts
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A app.celery_tasks.celery_config worker
+      --loglevel=info
+      -P threads
+      -c 1
+
+  # ── Celery Beat ──────────────────────────────────────────────────────────────
+  # Scheduler cho periodic tasks (cleanup jobs cũ, reset key stats theo ngày...).
+  # CHỈ chạy 1 instance (nhiều beat = duplicate tasks).
+  beat:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql+asyncpg://manga:manga_secret@db:5432/manga_translator"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.celery_tasks.celery_config beat --loglevel=info
+
+# ── Named Volumes ────────────────────────────────────────────────────────────
+# pgdata: Docker tự quản lý, persist khi container stop/remove.
+# Xem volumes: docker volume ls
+# Xóa volume:  docker volume rm manga-image-translator_pgdata
+volumes:
+  pgdata:
