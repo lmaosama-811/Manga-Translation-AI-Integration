@@ -1048,6 +1048,9 @@
             btnSubmit.setAttribute('disabled', 'true');
             timingCard.style.display = 'none';
 
+            let statusSteps = [];
+            let interval;
+
             if (isMulti) {
                 viewerGrid.style.display = 'none';
                 multiResultsSection.style.display = 'block';
@@ -1057,7 +1060,7 @@
                 loadingStatusMulti.textContent = `Dang dich ${selectedFiles.length} trang sequential...`;
             } else {
                 loadingOverlay.classList.add('active');
-                const statusSteps = [
+                statusSteps = [
                     "Bat dau: Doc anh & nen du lieu...",
                     "Dang gui anh sang VLM de OCR & Dich may...",
                     "VLM da phan hoi! Dang phan tich bong bong chat...",
@@ -1067,7 +1070,7 @@
                 ];
                 let stepIdx = 0;
                 loadingStatus.textContent = statusSteps[0];
-                var interval = setInterval(() => {
+                interval = setInterval(() => {
                     if (stepIdx < statusSteps.length - 2) {
                         stepIdx++;
                         loadingStatus.textContent = statusSteps[stepIdx];
