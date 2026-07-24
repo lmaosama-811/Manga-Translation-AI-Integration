@@ -2,7 +2,7 @@
 
 # 🎌 Manga Translation AI Integration
 
-**An end-to-end AI-powered pipeline that OCRs, translates, and renders manga pages from Japanese to Vietnamese — directly from your browser.**
+**An end-to-end AI-powered pipeline that OCRs, translates, and renders manga pages from any language to Vietnamese — directly from your browser.**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -15,7 +15,11 @@
 
 ## 📖 Overview
 
-Manga Translation AI Integration is a full-stack system that lets you read Japanese manga in Vietnamese with **one click** from your browser. It combines a Vision-Language Model (VLM) for simultaneous OCR + translation, a classical inpainting model (LaMa) to cleanly erase the original text, and a custom rendering engine to typeset the Vietnamese translation back onto the page.
+Manga Translation AI Integration is a full-stack, production-ready pipeline that translates manga to Vietnamese directly from your browser.
+The core translation uses a **Vision-Language Model (Gemini)** to perform OCR, localization, and speech-bubble classification in a single multimodal pass — eliminating the traditional OCR → NMT → layout pipeline.
+Heavy workloads are offloaded to **Celery async workers**, while a custom **multi-key fallback engine** distributes requests across multiple API keys and model tiers to maximize throughput and minimize wait time.
+Cleaned pages are produced by combining **LaMa inpainting** (to erase original text) with a custom typesetter that reflows Vietnamese text into the original bubble geometry.
+Across chapters, a **character graph** tracks pronoun relationships and speaking styles, ensuring narrative consistency in the translated dialogue.
 
 The project consists of three major components working together:
 
