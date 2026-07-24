@@ -15,11 +15,7 @@
 
 ## 📖 Overview
 
-Manga Translation AI Integration is a full-stack, production-ready pipeline that translates manga to Vietnamese directly from your browser.
-The core translation uses a **Vision-Language Model (Gemini)** to perform OCR, localization, and speech-bubble classification in a single multimodal pass — eliminating the traditional OCR → NMT → layout pipeline.
-Heavy workloads are offloaded to **Celery async workers**, while a custom **multi-key fallback engine** distributes requests across multiple API keys and model tiers to maximize throughput and minimize wait time.
-Cleaned pages are produced by combining **LaMa inpainting** (to erase original text) with a custom typesetter that reflows Vietnamese text into the original bubble geometry.
-Across chapters, a **character graph** tracks pronoun relationships and speaking styles, ensuring narrative consistency in the translated dialogue.
+A one-click translation pipeline that automatically converts raw manga chapters into fully typeset Vietnamese. Instead of relying on traditional OCR and NMT pipelines, it leverages a single-pass **Gemini VLM** for simultaneous OCR, speech-bubble classification, and context-aware localization. The system features a **Celery-powered async worker architecture** with a multi-key fallback engine to maximize API throughput at zero cost. For visual processing, **LaMa inpainting** removes original Japanese text while a custom typesetting engine reflows translated text into precise bubble geometries. Additionally, a dynamic **character graph** preserves speaker identity, pronouns, and relationship context across chapters to ensure seamless narrative consistency.
 
 The project consists of three major components working together:
 
@@ -180,59 +176,5 @@ python run.py            # Windows
 | `PLAYWRIGHT_HEADLESS` | ⬜ | `true` in production, `false` for debug |
 
 See `.env.example` for the complete list with defaults.
-
----
-
-## 📁 Project Structure
-
-```
-Manga-Translation-AI-Integration/
-├── BE/
-│   ├── app/
-│   │   ├── ai/                  # VLM integrations (Gemini, Ollama, fallback engine)
-│   │   ├── api/routes/          # REST endpoints (translate, scrape)
-│   │   ├── celery_tasks/        # Async background jobs
-│   │   ├── core/                # Config, logging
-│   │   ├── prompts/             # System prompts + genre skill modules
-│   │   ├── services/            # DB, inpainting, rendering, AniList, browser scraper
-│   │   └── utils/               # Image processing, typesetting, grid overlay
-│   ├── fonts/                   # CJK + comic fonts for rendering
-│   └── manga_translator/        # Core ML pipeline (LaMa inpainting, text rendering)
-│
-├── FE/
-│   ├── extension/               # Chrome Extension (Manifest V3)
-│   ├── static/                  # Playground & Reader web UIs
-│   └── scriptable/              # iOS Scriptable companion script
-│
-├── hf_space/                    # HuggingFace Space for model quality testing
-├── Dockerfile                   # Single image for api / worker / beat
-├── docker-compose.yml           # 5-service orchestration
-└── requirements.txt
-```
-
----
-
-## 🔮 Future Improvements
-
-### 🗣️ Translation Quality
-- [ ] **User feedback system** — thumbs up/down per bubble + free-text correction, stored and used to refine prompts over time
-- [ ] **Active learning loop** — collect user corrections to periodically fine-tune or prompt-tune the translation model
-- [ ] **Multi-language support** — extend beyond Vietnamese to support other target languages
-
-### 🎨 UI / UX
-- [ ] **Improved Reader UI** — side-by-side original vs. translated view, zoom controls, keyboard navigation
-- [ ] **Better Playground** — drag-and-drop multi-image upload, real-time translation preview, bubble highlighting on hover
-- [ ] **Mobile-friendly layout** — responsive design for phone/tablet reading
-- [ ] **Progress indicators** — per-page status during chapter translation instead of a single loading spinner
-
-### ⚙️ Backend & Infrastructure
-- [ ] **Queue visibility** — dashboard showing job status, estimated time, and per-page progress
-- [ ] **Model routing** — automatically select model based on manga art style (e.g., Gemini for detailed, Qwen-VL for stylized)
-- [ ] **Batch optimization** — smart page grouping to maximize API throughput within rate limits
-- [ ] **Cloud deployment guide** — step-by-step for deploying to a VPS or cloud provider
-
-### 🔌 Integrations
-- [ ] **More manga sources** — extend the Chrome Extension with per-site optimized scrapers
-- [ ] **AniList sync** — mark chapters as "read" on AniList after completing a translation
 
 ---
