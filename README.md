@@ -15,7 +15,7 @@
 
 ## 📖 Overview
 
-A one-click translation pipeline that automatically converts raw manga chapters into fully typeset Vietnamese. Instead of relying on traditional OCR and NMT pipelines, it leverages a single-pass **Gemini VLM** for simultaneous OCR, speech-bubble classification, and context-aware localization. The system features a **Celery-powered async worker architecture** with a multi-key fallback engine to maximize API throughput at zero cost. For visual processing, **LaMa inpainting** removes original Japanese text while a custom typesetting engine reflows translated text into precise bubble geometries. Additionally, a dynamic **character graph** preserves speaker identity, pronouns, and relationship context across chapters to ensure seamless narrative consistency.
+A one-click translation pipeline that automatically converts raw manga chapters into fully typeset Vietnamese. Utilizing OCR for detecting texts and Gemini (or a local model) - a VLM - to translate with full context of image. The system features a **Celery-powered async worker architecture** with a multi-key fallback engine to maximize API throughput at zero cost. For visual processing, **LaMa inpainting** removes original Japanese text while a custom typesetting engine reflows translated text into precise bubble geometries. Additionally, a dynamic **character graph** preserves speaker identity, pronouns, and relationship context across chapters to ensure seamless narrative consistency.
 
 The project consists of three major components working together:
 
