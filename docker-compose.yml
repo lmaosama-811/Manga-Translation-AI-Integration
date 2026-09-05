@@ -15,8 +15,6 @@
 #   Xóa data: docker-compose down -v     (xóa pgdata volume)
 # ──────────────────────────────────────────────────────────────────────────────
 
-version: "3.9"
-
 services:
 
   # ── PostgreSQL Database ──────────────────────────────────────────────────────
@@ -64,6 +62,7 @@ services:
       PLAYWRIGHT_HEADLESS: "true"        # Chạy Chromium ẩn (server không có màn hình)
       REDIS_URL: "redis://redis:6379/0"  # "redis" = tên service, Docker tự resolve thành IP
       DATABASE_URL: "postgresql+asyncpg://manga:manga_secret@db:5432/manga_translator"
+      QT_QPA_PLATFORM: "offscreen"
     volumes:
       - ./library:/app/library        # Ảnh manga đã dịch — persist trên máy host
       - ./BE/models:/app/BE/models    # LaMa model weights (~217MB) — không bake vào image
@@ -90,6 +89,7 @@ services:
     environment:
       REDIS_URL: "redis://redis:6379/0"
       DATABASE_URL: "postgresql+asyncpg://manga:manga_secret@db:5432/manga_translator"
+      QT_QPA_PLATFORM: "offscreen"
     volumes:
       - ./library:/app/library
       - ./BE/models:/app/BE/models
@@ -115,6 +115,7 @@ services:
     environment:
       REDIS_URL: "redis://redis:6379/0"
       DATABASE_URL: "postgresql+asyncpg://manga:manga_secret@db:5432/manga_translator"
+      QT_QPA_PLATFORM: "offscreen"
     depends_on:
       db:
         condition: service_healthy

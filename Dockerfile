@@ -21,6 +21,7 @@ LABEL org.opencontainers.image.description="FastAPI + Celery + LaMa inpainting +
 # libgomp1    : PyTorch parallel ops (OpenMP)
 # curl        : dùng cho healthcheck của api container
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     git \
     curl \
     libgl1 \

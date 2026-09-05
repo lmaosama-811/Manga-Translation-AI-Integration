@@ -40,120 +40,34 @@ GEMINI_RESPONSE_SCHEMA = {
             "items": {
                 "type": "OBJECT",
                 "properties": {
-                    "box_2d": {
-                        "type": "ARRAY",
-                        "items": {"type": "INTEGER"},
-                        "description": "2D bounding box coordinates: [ymin, xmin, ymax, xmax] normalized to 0-1000."
+                    "bubble_id": {
+                        "type": "INTEGER",
+                        "description": (
+                            "Số thứ tự màu đỏ in ở góc trên bên trái của bong bóng thoại "
+                            "(bắt đầu từ 1). Đọc chính xác con số nhìn thấy trên ảnh."
+                        )
                     },
                     "text_vi": {
                         "type": "STRING",
-                        "description": "Translated Vietnamese text of the bubble/box."
-                    },
-                    "direction": {
-                        "type": "STRING",
-                        "enum": ["h", "v"],
-                        "description": "Text direction: h for horizontal, v for vertical."
+                        "description": "Bản dịch tiếng Việt tự nhiên của bong bóng thoại."
                     },
                     "clr": {
                         "type": "INTEGER",
                         "description": "Clean action: 1 (white bubble), 2 (screentone/complex), 3 (black bubble)."
                     }
                 },
-                "required": ["box_2d", "text_vi", "direction", "clr"]
+                "required": ["bubble_id", "text_vi", "clr"]
             }
         },
+
         "has_dialogue": {
             "type": "BOOLEAN",
             "description": "True if there is dialogue on the page, False otherwise."
-        },
-        "page_summary": {
-            "type": "STRING",
-            "description": "Brief narrative summary of the page."
-        },
-        "character_updates": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "name": {
-                        "type": "STRING",
-                        "description": "Name of the character."
-                    },
-                    "gender": {
-                        "type": "STRING",
-                        "enum": ["male", "female", "unknown"],
-                        "description": "Inferred or observed gender."
-                    },
-                    "age_range": {
-                        "type": "STRING",
-                        "enum": ["teen", "young_adult", "adult", "elder"],
-                        "description": "Approximate age range."
-                    },
-                    "speaks_to": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "target": {
-                                    "type": "STRING",
-                                    "description": "Name of target character."
-                                },
-                                "caller_pronoun": {
-                                    "type": "STRING",
-                                    "description": "Pronoun used by caller."
-                                },
-                                "target_pronoun": {
-                                    "type": "STRING",
-                                    "description": "Pronoun used for target."
-                                }
-                            },
-                            "required": ["target", "caller_pronoun", "target_pronoun"]
-                        }
-                    },
-                    "notes": {
-                        "type": "STRING",
-                        "description": "Additional notes about character state or pronoun updates."
-                    }
-                },
-                "required": ["name", "gender", "age_range", "speaks_to"]
-            }
-        },
-        "pronoun_shift": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "character": {
-                        "type": "STRING",
-                        "description": "Character name."
-                    },
-                    "target": {
-                        "type": "STRING",
-                        "description": "Target character name."
-                    },
-                    "previous_pronoun": {
-                        "type": "STRING",
-                        "description": "Previous pronoun used."
-                    },
-                    "new_pronoun": {
-                        "type": "STRING",
-                        "description": "New pronoun used."
-                    },
-                    "reason": {
-                        "type": "STRING",
-                        "description": "Reason for shift."
-                    }
-                },
-                "required": ["character", "target", "previous_pronoun", "new_pronoun"]
-            }
         }
     },
     "required": [
         "translations",
-        "has_dialogue",
-        "page_summary",
-        "character_updates",
-        "pronoun_shift"
+        "has_dialogue"
     ]
 }
 

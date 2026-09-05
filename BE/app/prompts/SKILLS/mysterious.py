@@ -141,7 +141,6 @@ Xưng hô trong mystery có ý nghĩa đặc biệt — thay đổi xưng hô = 
 
 **Nguyên tắc:**
 
-- Nếu nhân vật đột ngột thay đổi cách xưng hô với ai đó → GHI VÀO pronoun_shift trong response
 - KHÔNG tự ý normalize xưng hô cho "tự nhiên hơn" — sự bất thường là intentional
 - Nhân vật giấu danh tính: dùng xưng hô trung tính nhất có thể ("tôi" thay vì "tao/ta/bản thân")
 

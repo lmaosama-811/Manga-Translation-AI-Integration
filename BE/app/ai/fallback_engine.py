@@ -117,43 +117,18 @@ async def _try_models_on_key(
     model_names: list[str],
     vlm_image_base64: str,
     genre: list[str],
-    character_graph: str,
-    previous_chapter_summary: str,
     key_manager: KeyManager,
     manga_name: str = "",
     chapter_number: int = 0,
 ) -> tuple[dict[str, Any], BaseModel]:
     """
     Thử lần lượt tất cả model trong model_names trên 1 key duy nhất.
-
-    Logic nội bộ:
-      - PER_MODEL error   → skip model, thử model tiếp theo
-      - RPM 429           → đưa model về cuối danh sách (retry 1 lần), tiếp tục
-      - RPD daily         → mark exhausted trên key này, skip
-      - Thành công        → return ngay (tuple result, model)
-
-    Khi hết model:
-      - Tất cả RPD        → raise KeyFullyExhaustedError
-      - Có ít nhất 1 RPM  → raise AllModelsRPMError
-
-    Args:
-        key: Key object đang được giữ bởi caller (từ Queue).
-        model_names: Danh sách model ưu tiên (primary trước, fallback sau).
-        key_manager: Singleton KeyManager để mark exhausted.
-        (các arg còn lại truyền thẳng vào VLM)
-
-    Raises:
-        AllModelsRPMError: Cần key khác, key này cần nghỉ.
-        KeyFullyExhaustedError: Key hết quota ngày, loại khỏi pool.
     """
     try:
         key_label = f"Key#{key_manager.keys.index(key) + 1}"
     except ValueError:
         key_label = f"ProKey[...{key.key[-4:]}]"   # Pro key không nằm trong free key list
 
-    # Danh sách model thử lần lượt (KHÔNG retry cùng model trên cùng key)
-    # Lý do: retry gần như ngay lập tức → burst → 429 lại → vô ích
-    # Tầng 2 sẽ retry với KEY MỚI thay vì model mới trên key cũ
     model_names_to_try = list(model_names)
     had_rpm_error = False              # track để quyết định exception type cuối
 
@@ -167,8 +142,6 @@ async def _try_models_on_key(
             logger.debug(f"[Fallback] {key_label}|{model_name} — calling VLM...")
             custom_prompt = vlm_model.build_system_prompt(
                 genre=genre,
-                character_graph=character_graph,
-                previous_chapter_summary=previous_chapter_summary,
                 manga_name=manga_name,
                 chapter_number=chapter_number,
             )
@@ -191,27 +164,19 @@ async def _try_models_on_key(
                 err_msg = f"{err.detail} (HTTP {getattr(err, 'status_code', '?')})"
 
             if error_type == ErrorType.PER_MODEL:
-                # Lỗi cá nhân model (400, timeout, parse...) → skip, thử tiếp
                 logger.warning(f"[Fallback] {key_label}|{model_name} PER_MODEL: {err_msg[:120]} — skip model.")
                 continue
 
             elif error_type == ErrorType.RATE_LIMIT_RPM:
-                # RPM 429 — ghi nhận và chuyển sang model tiếp theo.
-                # KHÔNG retry cùng model trên cùng key: burst 2 request trong 0.5s
-                # sẽ trigger Google burst detection dù RPM/min vẫn trong ngưỡng.
-                # Tầng 2 sẽ retry với key MỚI từ Queue.
                 logger.warning(f"[Fallback] {key_label}|{model_name} RPM 429 — skip to next model (no same-key retry).")
                 had_rpm_error = True
-                continue   # ← chỉ next model, KHÔNG append lại
+                continue
 
             elif error_type == ErrorType.DAILY_EXHAUSTED:
-                # RPD — mark model exhausted trên key này, skip hẳn
                 logger.warning(f"[Fallback] {key_label}|{model_name} DAILY_EXHAUSTED — mark & skip.")
                 key_manager.mark_model_exhausted(key, model_name)
                 continue
 
-    # ── Hết model, không thành công ───────────────────────────────────────
-    # Kiểm tra: tất cả model có bị RPD không?
     all_rpd = all(m in key.exhausted_models for m in model_names)
 
     if all_rpd:
@@ -219,7 +184,6 @@ async def _try_models_on_key(
             f"{key_label}: all models daily-exhausted — exclude from pool until reset."
         )
     else:
-        # Có ít nhất 1 model bị RPM (không phải RPD) → key cần nghỉ RPM window
         raise AllModelsRPMError(
             f"{key_label}: all models hit RPM — need fresh key."
         )
@@ -233,8 +197,6 @@ async def execute_fallback_chain(
     primary_model_name: str,
     vlm_image_base64: str,
     genre: list[str],
-    character_graph: str = "",
-    previous_chapter_summary: str = "",
     preferred_key: Optional[Key] = None,
     single_model_only: bool = False,
     manga_name: str = "",
@@ -242,46 +204,24 @@ async def execute_fallback_chain(
 ) -> tuple[dict[str, Any], BaseModel]:
     """
     Điểm vào chính của hệ thống fallback (Tầng 1).
-
-    Queue mode — preferred_key is not None:
-      Chỉ thử models trên preferred_key được Queue cấp.
-      Raise AllModelsRPMError hoặc KeyFullyExhaustedError → Tầng 2 xử lý.
-
-    Legacy mode — preferred_key is None:
-      Round-robin key selection + internal key rotation.
-
-    Args:
-        single_model_only: Nếu True, chỉ thử primary_model_name (không fallback sang model khác).
-                           Dùng cho translate_async — khi bị RPM → re-queue ngay, không waste
-                           thêm calls vào flash/2.5-flash (mỗi call thêm = thêm RPM pressure).
     """
     key_manager = KeyManager()
-    # single_model_only=True: chỉ thử đúng 1 model (dùng cho async, không waste calls)
-    # single_model_only=False: full fallback chain (flash-lite → flash → 2.5-flash)
     if single_model_only:
         model_names = [primary_model_name]
     else:
         model_names = [primary_model_name] + get_fallback_model_names(primary_model_name)
 
-    # ── Queue mode ─────────────────────────────────────────────────────────
     if preferred_key is not None:
-        # Tầng 1: thử models trên key được giao, raise nếu thất bại.
-        # Tầng 2 (caller) sẽ bắt exception và xử lý key rotation qua Queue.
         return await _try_models_on_key(
             key                      = preferred_key,
             model_names              = model_names,
             vlm_image_base64         = vlm_image_base64,
             genre                    = genre,
-            character_graph          = character_graph,
-            previous_chapter_summary = previous_chapter_summary,
             key_manager              = key_manager,
             manga_name               = manga_name,
             chapter_number           = chapter_number,
         )
 
-    # ── Legacy mode ────────────────────────────────────────────────────────
-    # Hành vi cũ: round-robin key selection + internal key rotation.
-    # Dùng cho Playground (single request, không có Queue).
     try:
         current_key = key_manager.get_next_key_for_models(model_names)
     except RuntimeError as all_exhausted:
@@ -298,14 +238,11 @@ async def execute_fallback_chain(
                 model_names              = model_names,
                 vlm_image_base64         = vlm_image_base64,
                 genre                    = genre,
-                character_graph          = character_graph,
-                previous_chapter_summary = previous_chapter_summary,
                 key_manager              = key_manager,
                 manga_name               = manga_name,
                 chapter_number           = chapter_number,
             )
         except (AllModelsRPMError, KeyFullyExhaustedError) as key_err:
-            # Key hiện tại thất bại → thử key tiếp theo (legacy behavior)
             logger.warning(f"[Fallback Legacy] {key_err} — switching to next key.")
             available = key_manager.get_available_keys_for_models(model_names)
             untried   = [k for k in available if k not in keys_tried]

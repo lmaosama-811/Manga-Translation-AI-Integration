@@ -43,7 +43,6 @@ Chọn version đó. KHÔNG bao giờ dùng bản dịch nghĩa đen thô nếu 
 CONSTRAINT QUAN TRỌNG:
 
 - Sau khi chọn hướng cho series → GIỮ NHẤT QUÁN đến cuối
-- Ghi lại lựa chọn trong character_updates["notes"] lần đầu tiên gặp tên chiêu thức
 - Tên chiêu thức PHẢI nhất quán với GLOSSARY nếu đã có
 
 ---
@@ -111,8 +110,6 @@ Action manga có hệ thống xưng hô phản ánh power dynamic rõ ràng:
 | Nhân vật trẻ → đàn anh | "anh/em", "tiền bối/hậu bối" |
 | Demon King / Boss | "ta", "ngươi" — KHÔNG dùng "tôi/bạn" |
 | Nhân vật isekai từ thế giới hiện đại | ban đầu "tôi/bạn" → dần chuyển sang "ta/ngươi" nếu power up |
-
-CONSTRAINT: Xưng hô phải nhất quán với CHARACTER_GRAPH. Nếu graph chưa có → ghi vào character_updates.
 
 ---
 

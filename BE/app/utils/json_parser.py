@@ -1,7 +1,7 @@
 """
 Module: app.utils.json_parser
 Description: Handles extraction, sanitization, and structured parsing of VLM JSON responses.
-             Supports the nested schema: {translations, has_dialogue, page_summary, character_updates, pronoun_shift}
+             Supports the schema: {translations, has_dialogue}
 """
 
 import re
@@ -67,10 +67,7 @@ def parse_vlm_json(response_content: str) -> dict[str, Any]:
     Expected VLM output:
     {
         "translations": [...],
-        "has_dialogue": true/false,
-        "page_summary": "...",
-        "character_updates": [...],
-        "pronoun_shift": [...]
+        "has_dialogue": true/false
     }
     
     Returns a normalized dict. Missing fields are filled with safe defaults.
@@ -103,9 +100,6 @@ def parse_vlm_json(response_content: str) -> dict[str, Any]:
         return {
             "translations": data,
             "has_dialogue": len(data) > 0,
-            "page_summary": "",
-            "character_updates": [],
-            "pronoun_shift": [],
         }
     
     logger.error(f"Unexpected VLM response type: {type(data)}")
@@ -124,24 +118,9 @@ def _normalize_response(data: dict) -> dict[str, Any]:
     if not isinstance(has_dialogue, bool):
         has_dialogue = bool(has_dialogue)
     
-    page_summary = data.get("page_summary", "")
-    if not isinstance(page_summary, str):
-        page_summary = str(page_summary) if page_summary else ""
-    
-    character_updates = data.get("character_updates", [])
-    if not isinstance(character_updates, list):
-        character_updates = []
-    
-    pronoun_shift = data.get("pronoun_shift", [])
-    if not isinstance(pronoun_shift, list):
-        pronoun_shift = []
-    
     return {
         "translations": translations,
         "has_dialogue": has_dialogue,
-        "page_summary": page_summary,
-        "character_updates": character_updates,
-        "pronoun_shift": pronoun_shift,
     }
 
 
@@ -150,7 +129,5 @@ def _empty_response() -> dict[str, Any]:
     return {
         "translations": [],
         "has_dialogue": False,
-        "page_summary": "",
-        "character_updates": [],
-        "pronoun_shift": [],
     }
+

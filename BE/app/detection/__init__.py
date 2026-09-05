@@ -1,4 +1,4 @@
 """
 Package: app.detection
-Description: (Reserved for future detection utilities.)
+Description: Manga/Webtoon text block & speech bubble detection system.
 """

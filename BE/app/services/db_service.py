@@ -18,9 +18,10 @@ from sqlalchemy import select, update
 from sqlmodel import SQLModel
 
 from app.core.config import settings
-from app.schemas import Manga, ChapterSummary, MangaStatus
+from app.schemas import Manga, MangaStatus
 
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Engine & Session Factory
@@ -100,7 +101,6 @@ class MangaCRUD:
         name: str,
         manga_id: str | None = None,
         status: MangaStatus = MangaStatus.ONGOING,
-        overall_summary: Optional[str] = None,
         latest_chapter: Optional[int] = None,
     ) -> Manga:
         """
@@ -117,7 +117,6 @@ class MangaCRUD:
             name_slug=normalize_manga_title(name),
             manga_id=manga_id or _uuid.uuid4().hex,
             status=status,
-            overall_summary=overall_summary,
             latest_chapter=latest_chapter,
         )
         session.add(manga)
@@ -164,21 +163,6 @@ class MangaCRUD:
         return list(result.scalars().all())
 
     @staticmethod
-    async def update_summary(
-        session: AsyncSession,
-        manga_id: str,
-        overall_summary: str,
-    ) -> bool:
-        """Cập nhật overall_summary."""
-        result = await session.execute(
-            update(Manga)
-            .where(Manga.manga_id == manga_id)
-            .values(overall_summary=overall_summary)
-        )
-        await session.commit()
-        return result.rowcount > 0
-
-    @staticmethod
     async def update_latest_chapter(
         session: AsyncSession,
         manga_id: str,
@@ -214,7 +198,7 @@ class MangaCRUD:
 
     @staticmethod
     async def delete(session: AsyncSession, manga_id: str) -> bool:
-        """Xóa manga (cascade xóa cả chapter_summaries liên quan)."""
+        """Xóa manga."""
         manga = await MangaCRUD.get_by_manga_id(session, manga_id)
         if not manga:
             return False
@@ -223,140 +207,3 @@ class MangaCRUD:
         logger.info(f"[MangaCRUD] Deleted: {manga_id!r}")
         return True
 
-    @staticmethod
-    async def update_character_graph(
-        session: AsyncSession,
-        manga_id: str,
-        graph_json: str,
-    ) -> bool:
-        """Ghi đè character_graph (JSON string) vào bảng mangas."""
-        result = await session.execute(
-            update(Manga)
-            .where(Manga.manga_id == manga_id)
-            .values(character_graph=graph_json)
-        )
-        await session.commit()
-        return result.rowcount > 0
-
-
-# ---------------------------------------------------------------------------
-# CRUD: ChapterSummary
-# ---------------------------------------------------------------------------
-
-class ChapterSummaryCRUD:
-
-    @staticmethod
-    async def upsert(
-        session: AsyncSession,
-        *,
-        manga_id: str,
-        chapter_number: int,
-        summary: str,
-        name: Optional[str] = None,
-        manga_name: Optional[str] = None,
-    ) -> ChapterSummary:
-        """
-        Tạo mới hoặc cập nhật chapter summary.
-        Tự động tạo manga record nếu chưa tồn tại (tránh ForeignKeyViolationError).
-        Tự động cập nhật latest_chapter trên bảng manga sau khi lưu.
-        """
-        # effective_name: ưu tiên tên truyện, fallback về chapter_name, cuối cùng mới "Chapter N"
-        # Trước đây chỉ có `name or f"Chapter {chapter_number}"` → lưu sai "Chapter 300"
-        effective_name = name or manga_name or f"Chapter {chapter_number}"
-
-        # Đảm bảo manga tồn tại trước khi insert chapter_summary (FK constraint)
-        manga = await MangaCRUD.get_by_manga_id(session, manga_id)
-        if not manga:
-            manga = Manga(
-                manga_id=manga_id,
-                name=manga_name or manga_id,  # Dùng manga_id làm tên tạm nếu chưa có
-                status=MangaStatus.ONGOING,
-            )
-            session.add(manga)
-            await session.flush()  # Flush để có row trong DB trước khi insert FK
-            logger.info(f"[ChapterCRUD] Auto-created manga record: {manga_id!r}")
-
-        existing = await ChapterSummaryCRUD.get(session, manga_id, chapter_number)
-
-        if existing:
-            existing.summary = summary
-            existing.name = effective_name  # luôn cập nhật với effective_name
-            session.add(existing)
-            await session.commit()
-            await session.refresh(existing)
-            logger.info(f"[ChapterCRUD] Updated ch={chapter_number} manga={manga_id!r}")
-            return existing
-        else:
-            chapter = ChapterSummary(
-                manga_id=manga_id,
-                chapter_number=chapter_number,
-                summary=summary,
-                name=effective_name,  # không bao giờ NULL
-            )
-            session.add(chapter)
-            await session.commit()
-            await session.refresh(chapter)
-            logger.info(f"[ChapterCRUD] Created ch={chapter_number} manga={manga_id!r}")
-
-            # Cập nhật latest_chapter trên bảng manga
-            await MangaCRUD.update_latest_chapter(session, manga_id, chapter_number)
-            return chapter
-
-    @staticmethod
-    async def get(
-        session: AsyncSession,
-        manga_id: str,
-        chapter_number: int,
-    ) -> Optional[ChapterSummary]:
-        """Lấy summary của 1 chapter cụ thể."""
-        result = await session.execute(
-            select(ChapterSummary).where(
-                ChapterSummary.manga_id == manga_id,
-                ChapterSummary.chapter_number == chapter_number,
-            )
-        )
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def get_all_for_manga(
-        session: AsyncSession,
-        manga_id: str,
-    ) -> list[ChapterSummary]:
-        """Lấy tất cả chapter summary của một manga, theo thứ tự chapter."""
-        result = await session.execute(
-            select(ChapterSummary)
-            .where(ChapterSummary.manga_id == manga_id)
-            .order_by(ChapterSummary.chapter_number)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def get_recent(
-        session: AsyncSession,
-        manga_id: str,
-        limit: int = 5,
-    ) -> list[ChapterSummary]:
-        """Lấy N chapter summary mới nhất (dùng cho context window)."""
-        result = await session.execute(
-            select(ChapterSummary)
-            .where(ChapterSummary.manga_id == manga_id)
-            .order_by(ChapterSummary.chapter_number.desc())
-            .limit(limit)
-        )
-        # Trả về theo thứ tự cũ → mới
-        return list(reversed(result.scalars().all()))
-
-    @staticmethod
-    async def delete(
-        session: AsyncSession,
-        manga_id: str,
-        chapter_number: int,
-    ) -> bool:
-        """Xóa summary của 1 chapter."""
-        chapter = await ChapterSummaryCRUD.get(session, manga_id, chapter_number)
-        if not chapter:
-            return False
-        await session.delete(chapter)
-        await session.commit()
-        logger.info(f"[ChapterCRUD] Deleted ch={chapter_number} manga={manga_id!r}")
-        return True

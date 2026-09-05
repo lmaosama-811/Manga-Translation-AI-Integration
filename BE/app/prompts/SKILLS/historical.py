@@ -170,9 +170,7 @@ BƯỚC 1: Xác định series thiên về phong cách nào hơn:
 
 **RULE NHẤT QUÁN — TỐI THƯỢNG:**
 
-- Sau khi xác định hệ thống xưng hô cho series → GHI VÀO character_updates["notes"] lần đầu
 - KHÔNG được đổi hệ thống giữa chừng trừ khi có lý do plot (ví dụ: nhân vật cải trang thành thường dân)
-- Xưng hô thay đổi đột ngột = clue quan trọng → GHI VÀO pronoun_shift
 
 **ĐIỀU KHÔNG ĐƯỢC LÀM:**
 

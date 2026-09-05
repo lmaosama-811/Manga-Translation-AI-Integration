@@ -99,7 +99,6 @@ class NovelStrategy(TranslationStrategy):
         )
 
         job["novel_text"]       = result["translated_text"]
-        job["chapter_summary"]  = result["chapter_summary"]
         job["total_pages"]      = 1   # novel = 1 đơn vị logic
         job["translated_pages"] = 1
         return result

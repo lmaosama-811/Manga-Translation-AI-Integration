@@ -7,8 +7,13 @@ import requests
 import subprocess
 from urllib.parse import urlparse
 
-from .lib.page import Page, NotAnImageException
-from .lib.debug import Debug
+try:
+    from .lib.page import Page, NotAnImageException
+    from .lib.debug import Debug
+except (ImportError, ModuleNotFoundError):
+    Page = None
+    NotAnImageException = Exception
+    Debug = None
 
 
 class Kumiko:

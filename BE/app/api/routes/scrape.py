@@ -63,7 +63,6 @@ def _make_job(
         "translated_pages":  0,
         "pages":             [],                  # manga: filled page-by-page; novel: empty
         "novel_text":        None,                # novel: full translated text; manga: None
-        "chapter_summary":   None,                # filled after translation
         "error":             None,
         "reader_url":        reader_url,
     }
@@ -568,18 +567,9 @@ async def scrape_submit(payload: ScrapePayload) -> JSONResponse:
 
             try:
                 from app.celery_tasks.background_task import process_chapter_background_after_VLM_response
-                novel_mode = (payload.mode == "novel")
-                page_summaries = (
-                    [result.get("chapter_summary", "")]
-                    if novel_mode
-                    else result.get("page_summaries", [])
-                )
                 process_chapter_background_after_VLM_response.delay(
                     manga_id=manga_id,
                     chapter_number=clean_chapter,
-                    page_summaries=page_summaries,
-                    character_updates=result.get("character_updates", []),
-                    pronoun_shifts=result.get("pronoun_shifts", []),
                     manga_name=novel_display_name,
                 )
             except Exception as bg_err:
@@ -819,18 +809,9 @@ async def _scrape_and_translate(url: str, body: UrlScrapePayload, job_id: str) -
 
         try:
             from app.celery_tasks.background_task import process_chapter_background_after_VLM_response
-            novel_mode = (body.mode == "novel")
-            page_summaries = (
-                [result.get("chapter_summary", "")]
-                if novel_mode
-                else result.get("page_summaries", [])
-            )
             process_chapter_background_after_VLM_response.delay(
                 manga_id=manga_id,
                 chapter_number=clean_chapter,
-                page_summaries=page_summaries,
-                character_updates=result.get("character_updates", []),
-                pronoun_shifts=result.get("pronoun_shifts", []),
                 manga_name=display_name,
             )
         except Exception as bg_err:
@@ -872,7 +853,6 @@ async def scrape_from_url(body: UrlScrapePayload) -> JSONResponse:
         "translated_pages": 0,
         "pages":            [],
         "novel_text":       None,
-        "chapter_summary":  None,
         "error":            None,
         "reader_url":       f"http://localhost:8000/reader?job_id={job_id}",
     }

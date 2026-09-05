@@ -8,17 +8,27 @@ import functools
 import logging
 from pathlib import Path
 from typing import Tuple, Optional, List
-from hyphen import Hyphenator
-from hyphen.dictools import LANGUAGES as HYPHENATOR_LANGUAGES
-from langcodes import standardize_tag
-
-from ..utils import BASE_PATH, is_punctuation
+try:
+    from langcodes import standardize_tag
+except ImportError:
+    def standardize_tag(tag):
+        return str(tag)
 
 try:
-    HYPHENATOR_LANGUAGES.remove('fr')
-    HYPHENATOR_LANGUAGES.append('fr_FR')
-except Exception:
-    pass
+    from hyphen import Hyphenator
+    from hyphen.dictools import LANGUAGES as HYPHENATOR_LANGUAGES
+    try:
+        HYPHENATOR_LANGUAGES.remove('fr')
+        HYPHENATOR_LANGUAGES.append('fr_FR')
+    except Exception:
+        pass
+    HAS_HYPHEN = True
+except ImportError:
+    Hyphenator = None
+    HYPHENATOR_LANGUAGES = []
+    HAS_HYPHEN = False
+
+from ..utils import BASE_PATH, is_punctuation
 
 CJK_H2V = {
     "‥": "︰",
@@ -581,7 +591,12 @@ def put_text_vertical(font_size: int, text: str, h: int, alignment: str, fg: Tup
     return line_box[y:y+h, x:x+w]
 
 def select_hyphenator(lang: str):
-    lang = standardize_tag(lang)
+    if not HAS_HYPHEN or not lang:
+        return None
+    try:
+        lang = standardize_tag(lang)
+    except Exception:
+        pass
     if lang not in HYPHENATOR_LANGUAGES:
         for avail_lang in reversed(HYPHENATOR_LANGUAGES):
             if avail_lang.startswith(lang):

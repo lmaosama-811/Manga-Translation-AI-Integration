@@ -45,14 +45,12 @@ from app.utils.pipeline_helpers import (
     seconds_until_reset,
     prepare_image,
     log_timings,
-    fetch_previous_chapter_summary,
     make_vlm_error,
     reset_key_stats,
     log_key_stats,
 )
-from app.services.inpainting import run_local_lama_inpainting
+from app.services.inpainting import generate_mask, inpaint_image, run_local_lama_inpainting
 from app.services.rendering import init_rendering_engine, render_text_bubbles
-from app.services.graph_service import GraphService
 from app.ai.fallback_engine import AllModelsRPMError, KeyFullyExhaustedError
 
 logger = logging.getLogger(__name__)
@@ -70,7 +68,6 @@ async def _vlm_single_page(
     page_index: int,
     model: str,
     genre_list: list[str],
-    previous_chapter_summary: str,
     preferred_key=None,
     single_model_only: bool = False,
     manga_name: str = "",
@@ -79,27 +76,17 @@ async def _vlm_single_page(
     """
     Phase 1: Chạy image prep và VLM call cho 1 trang.
     Không render, không Celery — chỉ trả về raw VLM output + ảnh gốc.
-
-    single_model_only=True (async mode):
-      Chỉ thử model chỉ định, không fallback sang flash/2.5-flash.
-      Khi bị RPM → raise AllModelsRPMError ngay → worker re-queue trang với key mới.
-      Mục đích: không waste thêm 2 API calls (flash/2.5-flash) khi flash-lite đã bị RPM.
     """
     try:
         t0 = time.perf_counter()
-        orig_image, _, vlm_image_base64 = prepare_image(image_bytes)
+        orig_image, _, vlm_image_base64, detected_blocks = prepare_image(image_bytes)
         t_compression = time.perf_counter() - t0
-
-        G = await GraphService.load(manga_id, use_cache=True)
-        character_graph_prompt = GraphService.to_prompt(G)
 
         t1 = time.perf_counter()
         vlm_response, vlm_model_used = await call_vlm_with_fallback(
             primary_model_name=model,
             vlm_image_base64=vlm_image_base64,
             genre=genre_list,
-            character_graph=character_graph_prompt,
-            previous_chapter_summary=previous_chapter_summary,
             preferred_key=preferred_key,
             single_model_only=single_model_only,
             manga_name=manga_name,
@@ -107,15 +94,12 @@ async def _vlm_single_page(
         )
         t_vlm = time.perf_counter() - t1
 
-        page_summary      = vlm_response.get("page_summary", "")
-        character_updates = vlm_response.get("character_updates", [])
-
         # Per-page detail — DEBUG only
         logger.debug(
             f"[p{page_index}] VLM done in {t_vlm:.1f}s — "
             f"has_dialogue={vlm_response.get('has_dialogue')} "
             f"bubbles={len(vlm_response.get('translations', []))} "
-            f"char_updates={len(character_updates)}"
+            f"detected_blocks={len(detected_blocks)}"
         )
 
         return {
@@ -123,6 +107,7 @@ async def _vlm_single_page(
             "orig_image":          orig_image,
             "vlm_response":        vlm_response,
             "vlm_model_used":      vlm_model_used,
+            "detected_blocks":     detected_blocks,
             "t_image_compression": t_compression,
             "t_vlm_api_call":      t_vlm,
             "error":               None,
@@ -149,19 +134,6 @@ async def _render_single_page(vlm_result: dict) -> dict:
     """
     Phase 2: Nhận kết quả VLM đã có sẵn, chạy LaMa + render text.
     Blocking (PyTorch), chạy sequential — không gather.
-
-    Returns:
-        {
-            "rendered_image": PIL.Image,
-            "rendered_base64": str,
-            "has_dialogue": bool,
-            "translations": list,
-            "page_summary": str,
-            "character_updates": list,
-            "pronoun_shift": list,
-            "timings": dict,
-            "model_used": str,
-        }
     """
     if vlm_result.get("error"):
         raise RuntimeError(vlm_result["error"])
@@ -171,11 +143,8 @@ async def _render_single_page(vlm_result: dict) -> dict:
     vlm_model_used = vlm_result["vlm_model_used"]
     page_index    = vlm_result["page_index"]
 
-    page_summary      = vlm_response.get("page_summary", "")
-    character_updates = vlm_response.get("character_updates", [])
-    pronoun_shift     = vlm_response.get("pronoun_shift", [])
-    has_dialogue      = vlm_response.get("has_dialogue", False)
-    translations      = vlm_response.get("translations", [])
+    has_dialogue  = vlm_response.get("has_dialogue", False)
+    translations  = vlm_response.get("translations", [])
 
     timings = {
         "image_compression":        vlm_result["t_image_compression"],
@@ -194,13 +163,15 @@ async def _render_single_page(vlm_result: dict) -> dict:
         font_path = get_font_path()
         init_rendering_engine(font_path)
         text_regions, full_regions_pts, img_rgb = prepare_text_blocks(
-            translations, orig_image, vlm_model_used
+            translations, orig_image, vlm_model_used,
+            detected_blocks=vlm_result.get("detected_blocks", []),
         )
         timings["bubble_analysis_typesetting"] = time.perf_counter() - t_step
 
         if text_regions:
             t_inp = time.perf_counter()
-            img_inpainted = await run_local_lama_inpainting(img_rgb, full_regions_pts)
+            mask = generate_mask(img_rgb, text_regions)
+            img_inpainted = await inpaint_image(img_rgb, mask, blk_list=text_regions)
             timings["inpainting"] = time.perf_counter() - t_inp
 
             t_rend = time.perf_counter()
@@ -229,9 +200,6 @@ async def _render_single_page(vlm_result: dict) -> dict:
         "rendered_base64":   rendered_base64,
         "has_dialogue":      has_dialogue,
         "translations":      translations,
-        "page_summary":      page_summary,
-        "character_updates": character_updates,
-        "pronoun_shift":     pronoun_shift,
         "timings":           timings,
         "model_used":        vlm_model_used.model_name,
     }
@@ -250,7 +218,6 @@ async def _translate_single_page(
     chapter_number: int = 0,
     model: str = "gemini-3.5-flash",
     genre_list: list[str] | None = None,
-    previous_chapter_summary: str = "",
     manga_name: str = "",
 ) -> dict:
     """Convenience wrapper: VLM → Render trong 1 call (dùng cho Playground)."""
@@ -260,7 +227,6 @@ async def _translate_single_page(
         page_index=page_index,
         model=model,
         genre_list=genre_list or [],
-        previous_chapter_summary=previous_chapter_summary,
         manga_name=manga_name,
         chapter_number=chapter_number,
     )
@@ -276,7 +242,6 @@ async def translate_manga_page(
     files: list[UploadFile] = File(..., description="File(s) ảnh trang truyện (PNG, JPG, JPEG, WEBP)"),
     model: str = Query("gemini-3.5-flash", description="Tên model VLM sử dụng"),
     genre: str = Query("", description="Danh sách skill thể loại, phân tách bằng dấu phẩy"),
-    chapter_summary: str = Query("", description="Summary của chapter TRƯỚC"),
     manga_id: str = Query("", description="Slug ID bộ truyện - tự tạo nếu bỏ trống"),
     chapter_number: int = Query(0, description="Số thứ tự chapter"),
     page_index: int = Query(0, description="Số thứ tự trang đầu tiên (tăng dần nếu nhiều trang)"),
@@ -302,7 +267,6 @@ async def translate_manga_page(
                 chapter_number=chapter_number,
                 model=model,
                 genre_list=genre_list,
-                previous_chapter_summary=chapter_summary,
             )
             return JSONResponse(content={
                 "status":            "success",
@@ -313,9 +277,6 @@ async def translate_manga_page(
                 "timings":           result["timings"],
                 "translations":      result["translations"],
                 "translated_image":  result["rendered_base64"],
-                "page_summary":      result["page_summary"],
-                "character_updates": result["character_updates"],
-                "pronoun_shift":     result["pronoun_shift"],
             })
 
         # Multi-page: sequential, page_index tang dan tu gia tri user nhap
@@ -330,7 +291,6 @@ async def translate_manga_page(
                 chapter_number=chapter_number,
                 model=model,
                 genre_list=genre_list,
-                previous_chapter_summary=chapter_summary,
             )
             page_results.append({
                 "page_index":      idx,
@@ -374,9 +334,6 @@ async def _run_render_phase(
     logger.info(f"[Ch{chapter_number}] Phase 2/2 start — render {total} pages (sequential)")
     t_phase2 = time.perf_counter()
 
-    all_page_summaries:    list[str] = []
-    all_character_updates: list      = []
-    all_pronoun_shifts:    list      = []
     saved_paths:  list[str]  = []
     page_results: list[dict] = []
 
@@ -398,17 +355,11 @@ async def _run_render_phase(
             rendered["rendered_image"].save(str(filepath), format="PNG")
             saved_paths.append(str(filepath))
 
-            if rendered["page_summary"]:
-                all_page_summaries.append(rendered["page_summary"])
-            all_character_updates.extend(rendered["character_updates"])
-            all_pronoun_shifts.extend(rendered["pronoun_shift"])
-
             page_results.append({
                 "page_index":   page_index,
                 "filename":     filename,
                 "preview_url":  make_library_url(manga_name, manga_id, chapter_number, filename),
                 "has_dialogue": rendered["has_dialogue"],
-                "page_summary": rendered["page_summary"],
                 "time_taken":   rendered["timings"]["total"],
             })
             logger.debug(
@@ -440,10 +391,6 @@ async def _run_render_phase(
         "saved_paths":      saved_paths,
         "page_results":     page_results,
         "output_dir":       str(out_dir),
-        # Dữ liệu intelligence tổng hợp từ toàn chapter — dùng cho background Celery task
-        "page_summaries":    all_page_summaries,
-        "character_updates": all_character_updates,
-        "pronoun_shifts":    all_pronoun_shifts,
     }
 
 
@@ -463,7 +410,6 @@ async def _async_vlm_worker(
     cooldown: float,
     manga_id: str,
     genre_list: list[str],
-    previous_chapter_summary: str,
     manga_name: str,
     chapter_number: int,
     chapter_label: str,
@@ -472,21 +418,6 @@ async def _async_vlm_worker(
 ) -> None:
     """
     Worker coroutine cho translate_async Work Queue.
-
-    Vòng lặp chính:
-      1. work_q.get(timeout=2s) — chờ item (page_index, img_bytes, retry_count)
-      2. key_pool.get()         — chờ key rảnh (có thể block lâu khi tất cả key đang cooldown)
-      3. _vlm_single_page()     — dịch trang với key được giao (flash-lite, Queue mode)
-      4. Xử lý kết quả:
-         - ✅ Thành công          → lưu result, trả key cooldown bình thường
-         - ❌ AllModelsRPMError   → re-queue trang (retry+1), key cooldown ×2.5
-         - ❌ KeyFullyExhaustedError → re-queue, key delay đến daily reset
-         - ❌ Lỗi khác / max retry → mark error, không re-queue
-      5. work_q.task_done()     — luôn gọi (kể cả khi re-queue)
-         Re-queue tạo TASK MỚI (+1 unfinished), task_done đóng TASK CŨ (-1).
-         Net effect: unfinished count giữ nguyên khi re-queue, giảm khi success.
-
-    Worker thoát khi done_event được set (work_q.join() đã return).
     """
     while not done_event.is_set():
         try:
@@ -504,7 +435,6 @@ async def _async_vlm_worker(
                 page_index=page_index,
                 model=model or _ASYNC_FLASH_MODEL,
                 genre_list=genre_list,
-                previous_chapter_summary=previous_chapter_summary,
                 preferred_key=key,
                 single_model_only=True,  # Không waste calls vào model fallback
                 manga_name=manga_name,
@@ -602,10 +532,6 @@ async def translate_async(
         f"pool={key_pool.qsize()} keys | max_retry={_ASYNC_MAX_RETRIES}"
     )
 
-    previous_chapter_summary = await fetch_previous_chapter_summary(manga_id, chapter_number)
-    if previous_chapter_summary:
-        logger.info(f"[{chapter_label}] Prev-chapter summary loaded ({len(previous_chapter_summary)} chars)")
-
     # Phase 1: Work Queue VLM
     work_q: asyncio.Queue        = asyncio.Queue()
     vlm_results: dict[int, dict] = {}
@@ -622,7 +548,7 @@ async def translate_async(
         asyncio.create_task(
             _async_vlm_worker(
                 work_q, key_pool, done_event, vlm_results,
-                cooldown, manga_id, genre_list, previous_chapter_summary, manga_name, chapter_number, chapter_label,
+                cooldown, manga_id, genre_list, manga_name, chapter_number, chapter_label,
                 model=_ASYNC_FLASH_MODEL,
                 pbar=pbar,
             )
@@ -704,10 +630,6 @@ async def translate_rich(
         f"key=Pro[...{tier1_key.key[-4:]}]"
     )
 
-    previous_chapter_summary = await fetch_previous_chapter_summary(manga_id, chapter_number)
-    if previous_chapter_summary:
-        logger.info(f"[{chapter_label}] Prev summary: {len(previous_chapter_summary)} chars")
-
     # ── Phase 1: VLM song song (Semaphore) ─────────────────────────────────
     from tqdm import tqdm
     pbar = tqdm(total=total, desc=f"[VLM] {chapter_label}", unit="p", ncols=90, leave=True)
@@ -723,7 +645,6 @@ async def translate_rich(
                         page_index=page_index,
                         model=model,
                         genre_list=genre_list,
-                        previous_chapter_summary=previous_chapter_summary,
                         preferred_key=tier1_key,
                         single_model_only=True,
                         manga_name=manga_name,
@@ -811,10 +732,6 @@ async def translate_sync(
         f"model={model!r} | mode=sequential (full model fallback)"
     )
 
-    previous_chapter_summary = await fetch_previous_chapter_summary(manga_id, chapter_number)
-    if previous_chapter_summary:
-        logger.info(f"[{chapter_label}] Prev-chapter summary loaded ({len(previous_chapter_summary)} chars)")
-
     # Phase 1: Sequential VLM
     logger.info(f"[{chapter_label}] Phase 1/2 start — sequential VLM x{total} pages")
     t_phase1 = time.perf_counter()
@@ -832,7 +749,6 @@ async def translate_sync(
                     page_index=i,
                     model=model,
                     genre_list=genre_list,
-                    previous_chapter_summary=previous_chapter_summary,
                     preferred_key=key,
                     manga_name=manga_name,
                     chapter_number=chapter_number,
@@ -866,11 +782,9 @@ async def translate_sync(
 # ==================================================================
 # Không có render phase, không có bounding box, không có ảnh.
 # Input:  list[str] các đoạn văn (paragraphs) của chapter.
-# Output: {translated_text, chapter_summary, character_updates, pronoun_shifts}
+# Output: {translated_text}
 #
 # Reuses:
-#   - fetch_previous_chapter_summary()  — lấy context chapter trước
-#   - GraphService.load()               — lấy character graph
 #   - KeyManager                        — chọn API key
 #   - GeminiModel.translate_text()      — text-only Gemini call
 #
@@ -892,7 +806,7 @@ async def translate_novel(
     genre_list: list[str] | None = None,
 ) -> dict:
     """
-    Dịch một chapter novel (plain text) sang tiếng Việt trong 1 API call.
+    Text-only pipeline cho Novel.
 
     Parameters
     ----------
@@ -907,9 +821,6 @@ async def translate_novel(
     -------
     dict with keys:
         translated_text   — full chapter text đã dịch
-        chapter_summary   — tóm tắt ngắn (dùng làm context chapter tiếp)
-        character_updates — list nhân vật xuất hiện (format giống manga)
-        pronoun_shifts    — list thay đổi xưng hô (format giống manga)
     """
     from app.ai.gemini import GeminiModel
     from app.ai.base_model import BaseModel
@@ -925,16 +836,7 @@ async def translate_novel(
     )
     t0 = time.perf_counter()
 
-    # ── Context: chapter trước + character graph (tái sử dụng hoàn toàn từ manga) ──
-    previous_summary  = await fetch_previous_chapter_summary(manga_id, chapter_number)
-    G                 = await GraphService.load(manga_id, use_cache=True)
-    character_graph   = GraphService.to_prompt(G)
-
-    if previous_summary:
-        logger.info(f"[{chapter_label}] Prev summary loaded ({len(previous_summary)} chars)")
-
     # ── Gom toàn bộ paragraphs thành 1 text block ──
-    # Dùng dấu phân cách rõ ràng để model biết ranh giới paragraph khi dịch.
     full_text = "\n\n".join(p.strip() for p in paragraphs if p.strip())
     if not full_text:
         raise ValueError("Novel content trống — không có gì để dịch.")
@@ -945,13 +847,11 @@ async def translate_novel(
     system_prompt = BaseModel.build_system_prompt(
         _NOVEL_SYSTEM_PROMPT_TEMPLATE,
         genre=genre_list,
-        character_graph=character_graph,
-        previous_chapter_summary=previous_summary,
         manga_name=manga_name,
         chapter_number=chapter_number,
     )
 
-    # ── Chọn key + retry đơn giản (không dùng Pool vì chỉ 1-2 calls) ──
+    # ── Chọn key + retry đơn giản ──
     km        = KeyManager()
     free_keys = [k for k in km.keys if k.tier == "free"]
     if not free_keys:
@@ -998,13 +898,9 @@ async def translate_novel(
     translated = data.get("translated_text", "")
     logger.info(
         f"[{chapter_label}] DONE — {elapsed:.1f}s | "
-        f"{len(translated)} chars translated | "
-        f"{len(data.get('character_updates', []))} char_updates"
+        f"{len(translated)} chars translated"
     )
 
     return {
-        "translated_text":   translated,
-        "chapter_summary":   data.get("chapter_summary", ""),
-        "character_updates": data.get("character_updates", []),
-        "pronoun_shifts":    data.get("pronoun_shifts", []),
+        "translated_text": translated,
     }
