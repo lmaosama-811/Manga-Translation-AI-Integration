@@ -23,6 +23,7 @@ class BaseModel(ABC):
         genre: list[str] = [],
         manga_name: str = "",
         chapter_number: int = 0,
+        glossary_terms: list[tuple[str, str]] | None = None,
     ) -> str:
         """
         Generic prompt renderer — nhận bất kỳ template nào và inject context.
@@ -31,8 +32,26 @@ class BaseModel(ABC):
           {{MANGA_TITLE}}              — tên bộ truyện
           {{CHAPTER_NUMBER}}           — số chapter hiện tại
           {{GENRE_SKILL}}              — skill text theo thể loại
+          {{GLOSSARY_BLOCK}}           — bảng thuật ngữ chuyên ngành (nếu có)
         """
         genre_skill = "\n".join(load_skill(g) for g in genre) if genre else ""
+
+        # Build glossary block
+        if glossary_terms:
+            lines = [
+                "═══════════════════════════════════════════════",
+                "SERIES LORE & POWER-SYSTEM GLOSSARY",
+                "═══════════════════════════════════════════════",
+                "Apply the following standardized translations for this series' unique lore and power concepts.",
+                "If a term below has multiple translation options separated by commas or slashes,",
+                "choose ONLY the single most contextually appropriate one — do NOT concatenate them all.",
+                "",
+            ]
+            for source, target in glossary_terms:
+                lines.append(f'- "{source}" → "{target}"')
+            glossary_block = "\n".join(lines)
+        else:
+            glossary_block = ""
 
         prompt = template
         prompt = prompt.replace("{{MANGA_TITLE}}",    manga_name or "Unknown")
@@ -41,6 +60,7 @@ class BaseModel(ABC):
             "{{GENRE_SKILL}}",
             genre_skill or "Không có skill thể loại.",
         )
+        prompt = prompt.replace("{{GLOSSARY_BLOCK}}", glossary_block)
         return prompt
 
     @abstractmethod

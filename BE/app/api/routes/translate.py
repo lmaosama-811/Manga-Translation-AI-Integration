@@ -52,6 +52,10 @@ from app.utils.pipeline_helpers import (
 from app.services.inpainting import generate_mask, inpaint_image, run_local_lama_inpainting
 from app.services.rendering import init_rendering_engine, render_text_bubbles
 from app.ai.fallback_engine import AllModelsRPMError, KeyFullyExhaustedError
+from app.services.glossary_service import (
+    load_glossary_for_manga as _load_glossary_for_manga,
+    aggregate_and_save_glossary as _aggregate_and_save_glossary,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,6 +76,7 @@ async def _vlm_single_page(
     single_model_only: bool = False,
     manga_name: str = "",
     chapter_number: int = 0,
+    glossary_terms: list[tuple[str, str]] | None = None,
 ) -> dict:
     """
     Phase 1: Chạy image prep và VLM call cho 1 trang.
@@ -91,6 +96,7 @@ async def _vlm_single_page(
             single_model_only=single_model_only,
             manga_name=manga_name,
             chapter_number=chapter_number,
+            glossary_terms=glossary_terms,
         )
         t_vlm = time.perf_counter() - t1
 
@@ -221,6 +227,8 @@ async def _translate_single_page(
     manga_name: str = "",
 ) -> dict:
     """Convenience wrapper: VLM → Render trong 1 call (dùng cho Playground)."""
+    # Load glossary (read-only) — không lưu từ mới vào DB cho trang lẻ
+    glossary_terms = await _load_glossary_for_manga(manga_id)
     vlm_result = await _vlm_single_page(
         image_bytes,
         manga_id=manga_id,
@@ -229,6 +237,7 @@ async def _translate_single_page(
         genre_list=genre_list or [],
         manga_name=manga_name,
         chapter_number=chapter_number,
+        glossary_terms=glossary_terms,
     )
     return await _render_single_page(vlm_result)
 
@@ -415,6 +424,7 @@ async def _async_vlm_worker(
     chapter_label: str,
     model: str = "",
     pbar=None,       # tqdm progress bar (optional)
+    glossary_terms: list[tuple[str, str]] | None = None,
 ) -> None:
     """
     Worker coroutine cho translate_async Work Queue.
@@ -439,6 +449,7 @@ async def _async_vlm_worker(
                 single_model_only=True,  # Không waste calls vào model fallback
                 manga_name=manga_name,
                 chapter_number=chapter_number,
+                glossary_terms=glossary_terms,
             )
             vlm_results[page_index] = result
             if pbar is not None:
@@ -526,6 +537,9 @@ async def translate_async(
 
     reset_key_stats()   # Reset counters trước chapter mới
 
+    # Load Glossary từ DB trước khi dịch
+    glossary_terms = await _load_glossary_for_manga(manga_id)
+
     logger.info(
         f"[{chapter_label}] START — manga={manga_id!r} | {total}p | "
         f"model={_ASYNC_FLASH_MODEL!r} | cooldown={cooldown}s | "
@@ -551,6 +565,7 @@ async def translate_async(
                 cooldown, manga_id, genre_list, manga_name, chapter_number, chapter_label,
                 model=_ASYNC_FLASH_MODEL,
                 pbar=pbar,
+                glossary_terms=glossary_terms,
             )
         )
         for _ in range(n_workers)
@@ -574,6 +589,9 @@ async def translate_async(
     log_key_stats(chapter_label)
 
     vlm_list = [vlm_results.get(i, make_vlm_error(i, "worker_missed")) for i in range(total)]
+
+    # Glossary Aggregation: gom từ mới và lưu vào DB
+    await _aggregate_and_save_glossary(manga_id, vlm_list, glossary_terms)
 
     # Phase 2: Render
     result = await _run_render_phase(vlm_list, out_dir, chapter_number, manga_id, manga_name, on_page_ready)
@@ -624,6 +642,10 @@ async def translate_rich(
     tier1_key = await pro_pool.get()
 
     reset_key_stats()
+
+    # Load Glossary từ DB
+    glossary_terms = await _load_glossary_for_manga(manga_id)
+
     logger.info(
         f"[{chapter_label}] START — manga={manga_id!r} | {total}p | "
         f"model={model!r} | concurrent={_RICH_CONCURRENT} | "
@@ -649,6 +671,7 @@ async def translate_rich(
                         single_model_only=True,
                         manga_name=manga_name,
                         chapter_number=chapter_number,
+                        glossary_terms=glossary_terms,
                     )
                     pbar.update(1)
                     return result
@@ -684,6 +707,9 @@ async def translate_rich(
             + (f" | ⚠️ {total - n_ok} lỗi" if n_ok < total else "")
         )
         log_key_stats(chapter_label)
+
+        # Glossary Aggregation: gom từ mới và lưu vào DB
+        await _aggregate_and_save_glossary(manga_id, vlm_results, glossary_terms)
 
         # ── Phase 2: Render ──────────────────────────────────────────────────────
         result = await _run_render_phase(vlm_results, out_dir, chapter_number, manga_id, manga_name, on_page_ready)
@@ -727,6 +753,9 @@ async def translate_sync(
 
     reset_key_stats()
 
+    # Load Glossary từ DB
+    glossary_terms = await _load_glossary_for_manga(manga_id)
+
     logger.info(
         f"[{chapter_label}] START — manga={manga_id!r} | {total}p | "
         f"model={model!r} | mode=sequential (full model fallback)"
@@ -752,6 +781,7 @@ async def translate_sync(
                     preferred_key=key,
                     manga_name=manga_name,
                     chapter_number=chapter_number,
+                    glossary_terms=glossary_terms,
                 )
                 vlm_results.append(result)
                 logger.debug(f"[{chapter_label}|p{i}] sync OK")
@@ -770,6 +800,9 @@ async def translate_sync(
         + (f" | ⚠️ {total - n_ok} lỗi" if n_ok < total else "")
     )
     log_key_stats(chapter_label)
+
+    # Glossary Aggregation: gom từ mới và lưu vào DB
+    await _aggregate_and_save_glossary(manga_id, vlm_results, glossary_terms)
 
     # Phase 2: Render
     result = await _run_render_phase(vlm_results, out_dir, chapter_number, manga_id, manga_name, on_page_ready)
@@ -843,12 +876,16 @@ async def translate_novel(
 
     logger.info(f"[{chapter_label}] Text length: {len(full_text)} chars")
 
+    # Load Glossary từ DB
+    glossary_terms = await _load_glossary_for_manga(manga_id)
+
     # ── Build system prompt ──
     system_prompt = BaseModel.build_system_prompt(
         _NOVEL_SYSTEM_PROMPT_TEMPLATE,
         genre=genre_list,
         manga_name=manga_name,
         chapter_number=chapter_number,
+        glossary_terms=glossary_terms,
     )
 
     # ── Chọn key + retry đơn giản ──
@@ -893,6 +930,14 @@ async def translate_novel(
         except Exception:
             logger.error(f"[{chapter_label}] Cannot parse novel response: {e}\nRaw: {raw_response[:200]}")
             raise RuntimeError(f"Novel API response không parse được: {e}")
+
+    # Glossary Aggregation: gom từ mới và lưu vào DB
+    if data.get("new_terms_discovered"):
+        await _aggregate_and_save_glossary(
+            manga_id,
+            [{"vlm_response": data}],
+            glossary_terms,
+        )
 
     elapsed = time.perf_counter() - t0
     translated = data.get("translated_text", "")

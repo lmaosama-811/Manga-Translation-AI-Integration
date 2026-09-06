@@ -3,9 +3,11 @@ Module: app.prompts.image_main_prompt
 Description: Stores the core system prompt template for VLM-based Manga translation.
              Uses placeholder tokens ({{...}}) populated at runtime by build_system_prompt().
 
-Thay đổi (bubble_id):
-  Prompt mới hướng dẫn Gemini đọc số bubble_id (màu đỏ) in sẵn trên ảnh thay vì
-  tự đoán tọa độ từ Grid Overlay 10x10.
+Placeholder tokens:
+  {{MANGA_TITLE}}    — Tên bộ truyện
+  {{CHAPTER_NUMBER}}  — Số chapter hiện tại
+  {{GENRE_SKILL}}     — Skill text theo thể loại
+  {{GLOSSARY_BLOCK}}  — Bảng thuật ngữ chuyên ngành từ DB (nếu có)
 """
 
 SYSTEM_PROMPT = """
@@ -23,6 +25,8 @@ Here are the genre skills that must be applied when translating.
 <genre_skills>
 {{GENRE_SKILL}}
 </genre_skills>
+
+{{GLOSSARY_BLOCK}}
 
 ═══════════════════════════════════════════════
 BUBBLE ID LABELS — READ BEFORE ANYTHING ELSE
@@ -72,6 +76,20 @@ For each RED-NUMBERED bubble visible in the image:
    - clr: 1 = plain white fill | 2 = screentone/complex background needs AI inpainting | 3 = plain black fill
 
 ═══════════════════════════════════════════════
+NEW TERM DISCOVERY (OPTIONAL — VERY STRICT)
+═══════════════════════════════════════════════
+You may optionally propose new lore/power-system terms in "new_terms_discovered" ONLY IF:
+1. The term is a unique fictional concept created by this series' author (e.g. energy systems like "Nen", power states like "Domain Expansion", cultivation ranks like "Nascent Soul").
+2. If translated word-by-word into Vietnamese, it would sound clumsy, unnatural, or lose its iconic fictional essence — hence it needs a curated translation.
+
+DO NOT extract:
+- Character names, place names, or personal technique/attack names (already preserved by Rule 3 above).
+- Common everyday nouns that exist in any dictionary (e.g. "Guild Master", "Magic Beast", "Danger", "City Council", "Killing Intent", "Battle").
+- Terms that are already listed in the GLOSSARY above — they are already standardized.
+- Derivative compound phrases when the root term already exists in the GLOSSARY (e.g. if "Nen" is already in GLOSSARY, do NOT extract "Nen ability" or "Nen user" — just translate them naturally using the root term).
+- If no genuine new lore/power-system concept is introduced on this page, leave "new_terms_discovered": [].
+
+═══════════════════════════════════════════════
 OUTPUT FORMAT — STRICT
 ═══════════════════════════════════════════════
 Output ONLY raw JSON. No markdown. No code fences. No explanation.
@@ -85,8 +103,19 @@ Exact schema:
       "clr": 1
     }
   ],
+  "new_terms_discovered": [
+    {
+      "source_term": "Original term in source language",
+      "target_term": "Vietnamese translation for this lore term"
+    }
+  ],
   "has_dialogue": true
 }
+
+NOTE on new_terms_discovered:
+- This array is OPTIONAL. Only populate it when a genuine new lore/power-system term appears.
+- Most pages will have "new_terms_discovered": []
+- Follow the VERY STRICT criteria in the NEW TERM DISCOVERY section above.
 
 VALIDATION before outputting:
 - Each entry in translations[] must have a bubble_id matching a red label visible in the image

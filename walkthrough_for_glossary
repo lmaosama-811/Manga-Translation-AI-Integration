@@ -1,0 +1,72 @@
+# Walkthrough: Hoàn thành triển khai Hệ thống Glossary (Thuật ngữ chuyên ngành đồng bộ)
+
+Hệ thống **Glossary Engine** đã được xây dựng và tích hợp hoàn chỉnh vào toàn bộ pipeline dịch Manga và Web Novel theo đúng thiết kế đã thống nhất.
+
+---
+
+## 1. Các thành phần đã triển khai
+
+### Database Layer
+- **[schemas.py](file:///BE/app/schemas.py)**:
+  - Thêm model `GlossaryTerm` với các trường: `id`, `manga_id` (index), `source_term` (index), `target_term`.
+  - Thiết lập constraint `UniqueConstraint("manga_id", "source_term", name="uq_glossary_manga_source")`.
+- **[db_service.py](file:///BE/app/services/db_service.py)**:
+  - Thêm class `GlossaryCRUD`:
+    - `get_by_manga_id(session, manga_id)`: Lấy toàn bộ thuật ngữ của một bộ truyện để nạp vào context.
+    - `save_chapter_terms(session, manga_id, new_terms)`: Lưu thuật ngữ mới, tuân thủ nguyên tắc *DB là chân lý* (không ghi đè từ đã có sẵn trong DB).
+  - Tối ưu `_engine` fallback tự động sang in-memory SQLite khi không có cấu hình PostgreSQL, giúp hệ thống không crash khi chạy unit test / dev.
+
+### Prompt Engineering Layer
+- **[image_main_prompt.py](file:///BE/app/prompts/image_main_prompt.py)**:
+  - Thêm placeholder `{{GLOSSARY_BLOCK}}` vào system prompt Manga.
+  - Bổ sung trường `new_terms_discovered` vào Output JSON format.
+  - Thêm chỉ thị phát hiện nghiêm ngặt (Discovery Criteria): Chỉ nhận diện thuật ngữ thế giới quan / cơ chế sức mạnh hư cấu do tác giả sáng tạo; bỏ qua tên riêng, từ điển thông dụng, từ đã có trong glossary, cụm phái sinh.
+- **[novel_prompt.py](file:///BE/app/prompts/novel_prompt.py)**:
+  - Thêm `{{GLOSSARY_BLOCK}}` và Discovery Rules vào system prompt Web Novel.
+  - Bổ sung `new_terms_discovered` vào `NOVEL_RESPONSE_SCHEMA`.
+- **[base_model.py](file:///BE/app/ai/base_model.py)**:
+  - Nâng cấp `BaseModel.build_system_prompt()`: chấp nhận `glossary_terms: list[tuple[str, str]] | None`.
+  - Format thành khối `SERIES LORE & POWER-SYSTEM GLOSSARY` với chỉ dẫn rõ ràng cho Gemini: nếu gặp thuật ngữ có nhiều nghĩa (ví dụ: `"Niệm, ý niệm"`), bắt buộc chọn 1 từ phù hợp nhất ngữ cảnh, tuyệt đối không ghép cả hai.
+
+### Pipeline Orchestration & Aggregator
+- **[glossary_service.py](file:///BE/app/services/glossary_service.py)**:
+  - `load_glossary_for_manga(manga_id)`: Đọc thuật ngữ từ DB.
+  - `aggregate_and_save_glossary(manga_id, vlm_results, existing_glossary)`: Gom nhóm theo `source_term.strip().lower()`, gộp nối các cách dịch thành chuỗi `"Dịch 1, Dịch 2"`, bỏ qua từ đã có trong DB, lưu vào PostgreSQL.
+- **[pipeline_helpers.py](file:///BE/app/utils/pipeline_helpers.py)** & **[fallback_engine.py](file:///BE/app/ai/fallback_engine.py)**:
+  - Truyền `glossary_terms` qua toàn bộ chuỗi fallback VLM.
+- **[translate.py](file:///BE/app/api/routes/translate.py)**:
+  - `translate_async`: Load glossary trước Phase 1 → truyền vào workers → chạy Aggregator cuối Phase 1 lưu vào DB trước khi render.
+  - `translate_rich`: Load glossary trước Phase 1 → truyền vào semaphore tasks → chạy Aggregator lưu vào DB.
+  - `translate_sync`: Load glossary trước Phase 1 → truyền vào sequential tasks → chạy Aggregator lưu vào DB.
+  - `translate_novel`: Load glossary nạp vào system prompt → tự động lưu thuật ngữ mới nếu Gemini phát hiện.
+  - `_translate_single_page`: Load glossary (read-only) phục vụ playground/test pipeline, **không lưu từ mới** theo đúng yêu cầu thiết kế.
+
+---
+
+## 2. Kết quả kiểm thử (Verification Results)
+
+Bộ test tự động `test_glossary_engine.py` đã kiểm tra toàn diện 6 test cases:
+
+```bash
+./venv/bin/python test_glossary_engine.py
+```
+
+### Kết quả chạy:
+```text
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.095s
+
+OK
+```
+
+1. **`test_manga_prompt_without_glossary`**: Khi không có glossary, placeholder `{{GLOSSARY_BLOCK}}` được xóa sạch, prompt giữ nguyên cấu trúc chuẩn.
+2. **`test_manga_prompt_with_empty_glossary`**: Khi glossary rỗng `[]`, không xuất hiện khối glossary thừa.
+3. **`test_manga_prompt_with_terms`**: Render chính xác khối `SERIES LORE & POWER-SYSTEM GLOSSARY`, format từng thuật ngữ `-"Source" → "Target"`, kèm chỉ thị chọn 1 phương án dịch.
+4. **`test_novel_prompt_with_terms`**: Render chuẩn xác khối Glossary cho Web Novel.
+5. **`test_crud_save_and_get`**: Kiểm tra thêm mới, query theo `manga_id`, và cơ chế bảo toàn dữ liệu (không ghi đè từ đã có).
+6. **`test_aggregation_and_deduplication`**:
+   - Gộp nhiều trang thành công.
+   - Nhận diện case-insensitive (`"Nen"` và `"nen"` được gom thành 1 entry `"Niệm, ý niệm"`).
+   - Tự động bỏ qua từ đã tồn tại trong DB (`"Zetsu"` được giữ nguyên, không lưu lại).
+   - Bỏ qua trang lỗi an toàn không gây crash.

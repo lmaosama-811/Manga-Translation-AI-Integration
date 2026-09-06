@@ -18,7 +18,7 @@ from sqlalchemy import select, update
 from sqlmodel import SQLModel
 
 from app.core.config import settings
-from app.schemas import Manga, MangaStatus
+from app.schemas import Manga, MangaStatus, GlossaryTerm
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +27,20 @@ logger = logging.getLogger(__name__)
 # Engine & Session Factory
 # ---------------------------------------------------------------------------
 
+_db_url = settings.DATABASE_URL or "sqlite+aiosqlite:///:memory:"
+_engine_kwargs: dict = {
+    "echo": False,
+}
+if "postgresql" in _db_url:
+    _engine_kwargs.update({
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_pre_ping": True,
+        "connect_args": {"ssl": False},
+    })
+
 # Engine dùng cho FastAPI process (gắn với event loop của FastAPI)
-_engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-    connect_args={"ssl": False},
-)
+_engine = create_async_engine(_db_url, **_engine_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=_engine,
@@ -206,4 +211,74 @@ class MangaCRUD:
         await session.commit()
         logger.info(f"[MangaCRUD] Deleted: {manga_id!r}")
         return True
+
+
+# ---------------------------------------------------------------------------
+# CRUD: Glossary
+# ---------------------------------------------------------------------------
+
+class GlossaryCRUD:
+
+    @staticmethod
+    async def get_by_manga_id(
+        session: AsyncSession,
+        manga_id: str,
+    ) -> list[GlossaryTerm]:
+        """
+        Lấy toàn bộ thuật ngữ glossary của một bộ truyện.
+        Dùng để nạp vào System Prompt trước khi gọi VLM.
+        """
+        result = await session.execute(
+            select(GlossaryTerm)
+            .where(GlossaryTerm.manga_id == manga_id)
+            .order_by(GlossaryTerm.source_term)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def save_chapter_terms(
+        session: AsyncSession,
+        manga_id: str,
+        new_terms: dict[str, str],
+    ) -> int:
+        """
+        Lưu các thuật ngữ mới phát hiện sau khi dịch xong 1 chapter.
+
+        new_terms: dict mapping {source_term: target_term}
+          - source_term đã được chuẩn hóa (strip/lower) bởi Aggregator.
+          - target_term có thể là chuỗi ghép (ví dụ "Niệm, ý niệm")
+            nếu Gemini đề xuất nhiều phương án dịch.
+
+        Nếu source_term đã tồn tại trong DB cho manga_id này → bỏ qua.
+        (Tuân thủ nguyên tắc: Database là Chân lý tuyệt đối).
+
+        Returns: Số thuật ngữ mới thực sự được thêm.
+        """
+        added = 0
+        for source, target in new_terms.items():
+            # Kiểm tra xem từ đã tồn tại chưa
+            existing = await session.execute(
+                select(GlossaryTerm).where(
+                    GlossaryTerm.manga_id == manga_id,
+                    GlossaryTerm.source_term == source,
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                continue  # Đã có trong DB → bỏ qua, không ghi đè
+
+            term = GlossaryTerm(
+                manga_id=manga_id,
+                source_term=source,
+                target_term=target,
+            )
+            session.add(term)
+            added += 1
+
+        if added > 0:
+            await session.commit()
+            logger.info(
+                f"[GlossaryCRUD] Saved {added} new term(s) for manga={manga_id!r}"
+            )
+        return added
+
 

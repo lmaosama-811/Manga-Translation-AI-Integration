@@ -47,6 +47,7 @@ async def call_vlm_with_fallback(
     single_model_only: bool = False,   # True = async mode: không fallback sang model khác
     manga_name: str = "",
     chapter_number: int = 0,
+    glossary_terms: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], BaseModel]:
     """
     Executes the VLM API call using the advanced FallbackEngine.
@@ -61,6 +62,7 @@ async def call_vlm_with_fallback(
         single_model_only=single_model_only,
         manga_name=manga_name,
         chapter_number=chapter_number,
+        glossary_terms=glossary_terms,
     )
 
 

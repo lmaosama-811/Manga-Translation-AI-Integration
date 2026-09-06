@@ -120,6 +120,7 @@ async def _try_models_on_key(
     key_manager: KeyManager,
     manga_name: str = "",
     chapter_number: int = 0,
+    glossary_terms: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], BaseModel]:
     """
     Thử lần lượt tất cả model trong model_names trên 1 key duy nhất.
@@ -144,6 +145,7 @@ async def _try_models_on_key(
                 genre=genre,
                 manga_name=manga_name,
                 chapter_number=chapter_number,
+                glossary_terms=glossary_terms,
             )
             key.request_count += 1   # ← đếm request cho stats log
             response   = await vlm_model.translate(vlm_image_base64, custom_prompt)
@@ -201,6 +203,7 @@ async def execute_fallback_chain(
     single_model_only: bool = False,
     manga_name: str = "",
     chapter_number: int = 0,
+    glossary_terms: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], BaseModel]:
     """
     Điểm vào chính của hệ thống fallback (Tầng 1).
@@ -220,6 +223,7 @@ async def execute_fallback_chain(
             key_manager              = key_manager,
             manga_name               = manga_name,
             chapter_number           = chapter_number,
+            glossary_terms           = glossary_terms,
         )
 
     try:
@@ -241,6 +245,7 @@ async def execute_fallback_chain(
                 key_manager              = key_manager,
                 manga_name               = manga_name,
                 chapter_number           = chapter_number,
+                glossary_terms           = glossary_terms,
             )
         except (AllModelsRPMError, KeyFullyExhaustedError) as key_err:
             logger.warning(f"[Fallback Legacy] {key_err} — switching to next key.")

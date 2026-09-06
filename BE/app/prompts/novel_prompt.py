@@ -24,6 +24,28 @@ NOVEL_RESPONSE_SCHEMA: dict = {
                 "KHÔNG rút gọn, KHÔNG bỏ sót câu nào."
             ),
         },
+        "new_terms_discovered": {
+            "type": "ARRAY",
+            "description": (
+                "Optional. Danh sách thuật ngữ chuyên ngành / hệ thống sức mạnh / thế giới quan "
+                "mới phát hiện trong chapter này. Chỉ đưa vào những từ THẬT SỰ đặc biệt "
+                "của bộ truyện. Nếu không có, trả mảng rỗng []."
+            ),
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "source_term": {
+                        "type": "STRING",
+                        "description": "Thuật ngữ gốc (bản ngôn ngữ nguồn)",
+                    },
+                    "target_term": {
+                        "type": "STRING",
+                        "description": "Bản dịch tiếng Việt đề xuất",
+                    },
+                },
+                "required": ["source_term", "target_term"],
+            },
+        },
     },
     "required": ["translated_text"],
 }
@@ -31,7 +53,7 @@ NOVEL_RESPONSE_SCHEMA: dict = {
 
 # ---------------------------------------------------------------------------
 # System prompt template
-# Placeholder tokens: {{MANGA_TITLE}}, {{CHAPTER_NUMBER}}, {{GENRE_SKILL}}
+# Placeholder tokens: {{MANGA_TITLE}}, {{CHAPTER_NUMBER}}, {{GENRE_SKILL}}, {{GLOSSARY_BLOCK}}
 # ---------------------------------------------------------------------------
 
 _NOVEL_SYSTEM_PROMPT_TEMPLATE = """
@@ -50,6 +72,8 @@ Chapter     : {{CHAPTER_NUMBER}}
 {{GENRE_SKILL}}
 </genre_skills>
 
+{{GLOSSARY_BLOCK}}
+
 ═══════════════════════════════════════════════
 NHIỆM VỤ
 ═══════════════════════════════════════════════
@@ -65,11 +89,30 @@ QUY TẮC DỊCH:
 7. Thuật ngữ tu luyện / hệ thống / kỹ năng: dịch hoặc giữ nguyên tùy ngữ cảnh, nhất quán
 
 ═══════════════════════════════════════════════
+NEW TERM DISCOVERY (OPTIONAL — VERY STRICT)
+═══════════════════════════════════════════════
+You may optionally propose new lore/power-system terms in "new_terms_discovered" ONLY IF:
+1. The term is a unique fictional concept created by this series' author (e.g. energy systems, cultivation ranks, unique races/factions).
+2. If translated word-by-word into Vietnamese, it would sound clumsy or lose its fictional essence.
+
+DO NOT extract:
+- Character names, place names, or personal technique names (kept in original form).
+- Common everyday nouns that exist in any dictionary.
+- Terms that are already listed in the GLOSSARY above.
+- Derivative compound phrases when the root term already exists in the GLOSSARY.
+- If no genuine new lore/power-system concept appears, leave "new_terms_discovered": [].
+
+═══════════════════════════════════════════════
 OUTPUT FORMAT — STRICT JSON
 ═══════════════════════════════════════════════
 Output ONLY raw JSON. No markdown. No code fences. No explanation.
 
 {
-  "translated_text": "Toàn bộ nội dung đã dịch, paragraphs ngăn cách bằng \\n\\n"
+  "translated_text": "Toàn bộ nội dung đã dịch, paragraphs ngăn cách bằng \\n\\n",
+  "new_terms_discovered": [
+    {"source_term": "Original term", "target_term": "Việt translation"}
+  ]
 }
+
+NOTE: "new_terms_discovered" is OPTIONAL. Most chapters will have []. Follow the VERY STRICT criteria above.
 """

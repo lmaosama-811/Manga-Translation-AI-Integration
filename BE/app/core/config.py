@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     PLAYWRIGHT_HEADLESS: bool = False
 
     model_config = SettingsConfigDict(
-        env_file="../.env",       # .env nằm ở root, server chạy từ BE/
+        env_file=(".env", "../.env"),       # Tìm .env ở thư mục hiện tại hoặc thư mục cha
         env_file_encoding="utf-8",
         extra="ignore"
     )
